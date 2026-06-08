@@ -1,0 +1,29 @@
+{
+  "name": "cruzy-linebot",
+  "version": "1.0.0",
+  "description": "Cruzy LINE Messaging API backend",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "check": "node --check backend/server.js && node --check backend/config/supabase.js && node --check backend/config/line.js && node --check backend/routes/line.webhook.js && node --check backend/middleware/line.middleware.js && node --check backend/handlers/lineMessage.handler.js && node --check backend/services/qa.service.js && node --check backend/services/flex.service.js && node --check backend/repositories/employee.repo.js && node --check backend/repositories/branch.repo.js && node --check backend/repositories/schedule.repo.js && node --check backend/utils/date.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wanwisajk/cruzy-linebot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/wanwisajk/cruzy-linebot/issues"
+  },
+  "homepage": "https://github.com/wanwisajk/cruzy-linebot#readme",
+  "dependencies": {
+    "@line/bot-sdk": "^11.0.1",
+    "@supabase/supabase-js": "^2.107.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  }
+}
