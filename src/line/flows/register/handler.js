@@ -1,0 +1,57 @@
+const employeeRepo = require('../../../../backend/repositories/employee.repo');
+const { logEvent } = require('../../utils/audit');
+const { replyOrPush } = require('../../reply');
+
+async function handle(event) {
+  const text = event.message && event.message.type === 'text' ? event.message.text : '';
+  const source = event.source || {};
+  const lineUserId = source.userId || null;
+
+  // Parse "สมัคร <id>" or "register <id>"
+  const match = text.match(/^(?:สมัคร|register)\s+(\d+)$/i);
+  if (!match) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูป: สมัคร <หมายเลข>' }] });
+    return;
+  }
+
+  const employeeId = match[1];
+
+  if (!lineUserId) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบ LINE userId ครับ' }] });
+    return;
+  }
+
+  // Check employee exists
+  const employee = await employeeRepo.findById(employeeId);
+  if (!employee) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ไม่พบพนักงานหมายเลข ${employeeId}` }] });
+    return;
+  }
+
+  // Check if already linked to different account
+  if (employee.line_user_id && employee.line_user_id !== lineUserId) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `พนักงานหมายเลข ${employeeId} ผูกกับ LINE account อื่นแล้ว` }] });
+    return;
+  }
+
+  // Check if this LINE account is linked to different employee
+  const existingEmployee = await employeeRepo.findByLineUserId(lineUserId);
+  if (existingEmployee && existingEmployee.id !== employeeId) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'LINE ของคุณเชื่อมกับพนักงานคนอื่นแล้ว' }] });
+    return;
+  }
+
+  // Update
+  try {
+    await employeeRepo.updateLineUserId(employeeId, lineUserId);
+    await logEvent('employee_registered', { employee_id: employeeId, line_user_id: lineUserId });
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: `ผูก LINE สำเร็จ\nชื่อ: ${employee.name}\nหมายเลข: ${employeeId}` }],
+    });
+  } catch (err) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'เกิดข้อผิดพลาด กรุณาลองใหม่' }] });
+  }
+}
+
+module.exports = { handle };

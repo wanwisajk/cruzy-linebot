@@ -13,6 +13,21 @@ async function findAllWithRegions() {
   return data || [];
 }
 
+async function findByCode(code) {
+  const { data, error } = await supabase
+    .from('branches')
+    .select('id,name,code,regions(name)')
+    .ilike('code', code)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
 module.exports = {
   findAllWithRegions,
+  findByCode,
 };

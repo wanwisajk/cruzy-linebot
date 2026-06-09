@@ -1,36 +1,58 @@
 require('dotenv').config();
 
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
-const lineWebhookRoutes = require('./routes/line.webhook');
+
+// Error handlers (ต้องจำไว้ก่อน require routes)
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  process.exit(1);
+});
+
+const srcLineWebhook = require('../src/line/webhook');
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
 
 app.get('/health', (req, res) => {
   res.json({
     ok: true,
     service: 'cruzy-linebot',
-    modules: ['line-messaging-api', 'qa'],
   });
 });
 
-app.use('/webhook', lineWebhookRoutes);
-
-app.use(cors());
-app.use(express.json());
+// Main webhook routes
+app.use('/webhook', srcLineWebhook);
+app.use('/public', express.static(path.join(__dirname, 'public')));
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
 app.use((err, req, res, next) => {
-  console.error(err);
+  console.error('🔴 Express Error:', err);
   res.status(err.status || 500).json({
     error: err.message || 'Internal server error',
   });
 });
 
-app.listen(port, () => {
-  console.log(`Cruzy LINE bot listening on port ${port}`);
+const server = app.listen(port, () => {
+  console.log(`✅ Cruzy LINE bot listening on port ${port}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 });

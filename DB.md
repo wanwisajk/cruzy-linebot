@@ -1,0 +1,414 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.branches (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  name character varying NOT NULL,
+  code character varying NOT NULL UNIQUE,
+  region_id integer,
+  CONSTRAINT branches_pkey PRIMARY KEY (id),
+  CONSTRAINT branches_region_id_fkey FOREIGN KEY (region_id) REFERENCES public.regions(id)
+);
+CREATE TABLE public.employees (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  name character varying NOT NULL,
+  color character varying NOT NULL,
+  position character varying DEFAULT 'พนักงานขาย'::character varying,
+  salary integer DEFAULT 0,
+  region_id integer,
+  nickname character varying,
+  line_user_id character varying,
+  phone character varying,
+  emp_type character varying DEFAULT 'fulltime'::character varying CHECK (emp_type::text = ANY (ARRAY['fulltime'::character varying::text, 'parttime'::character varying::text, 'freelance'::character varying::text])),
+  audit_actor_type character varying,
+  audit_actor_id character varying,
+  audit_actor_name text,
+  CONSTRAINT employees_pkey PRIMARY KEY (id),
+  CONSTRAINT employees_region_id_fkey FOREIGN KEY (region_id) REFERENCES public.regions(id)
+);
+CREATE TABLE public.schedules (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  branch_id integer NOT NULL,
+  employee_id bigint NOT NULL,
+  work_date date NOT NULL,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  shift_start time without time zone,
+  shift_end time without time zone,
+  status character varying DEFAULT 'planned'::character varying,
+  note text,
+  is_off boolean DEFAULT false,
+  assigned_by character varying,
+  audit_actor_type character varying,
+  audit_actor_id character varying,
+  audit_actor_name text,
+  CONSTRAINT schedules_pkey PRIMARY KEY (id),
+  CONSTRAINT schedules_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id),
+  CONSTRAINT schedules_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id)
+);
+CREATE TABLE public.users (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  username character varying NOT NULL UNIQUE,
+  password_hash character varying NOT NULL,
+  name character varying NOT NULL,
+  role character varying NOT NULL,
+  scope_type character varying NOT NULL,
+  scope_value character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT users_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.leaves (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  employee_id bigint NOT NULL,
+  leave_type character varying NOT NULL,
+  start_date date NOT NULL,
+  end_date date NOT NULL,
+  days_count integer NOT NULL DEFAULT 1,
+  reason text,
+  status character varying NOT NULL DEFAULT 'pending'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  audit_actor_type character varying,
+  audit_actor_id character varying,
+  audit_actor_name text,
+  CONSTRAINT leaves_pkey PRIMARY KEY (id),
+  CONSTRAINT leaves_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id)
+);
+CREATE TABLE public.leave_balances (
+  employee_id bigint NOT NULL,
+  annual_remaining integer NOT NULL DEFAULT 13,
+  vacation_remaining integer NOT NULL DEFAULT 5,
+  sick_used integer NOT NULL DEFAULT 0,
+  personal_used integer NOT NULL DEFAULT 0,
+  updated_at timestamp with time zone DEFAULT now(),
+  annual_quota integer NOT NULL DEFAULT 13,
+  annual_used integer NOT NULL DEFAULT 0,
+  vacation_quota integer NOT NULL DEFAULT 5,
+  vacation_used integer NOT NULL DEFAULT 0,
+  personal_quota integer NOT NULL DEFAULT 4,
+  audit_actor_type character varying,
+  audit_actor_id character varying,
+  audit_actor_name text,
+  CONSTRAINT leave_balances_pkey PRIMARY KEY (employee_id),
+  CONSTRAINT leave_balances_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id)
+);
+CREATE TABLE public.contracts (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  employee_id bigint NOT NULL,
+  contract_type character varying NOT NULL,
+  start_date date NOT NULL,
+  end_date date NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT contracts_pkey PRIMARY KEY (id),
+  CONSTRAINT contracts_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id)
+);
+CREATE TABLE public.sales (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  sell_date date NOT NULL,
+  branch_id integer NOT NULL,
+  cash_amount integer NOT NULL DEFAULT 0,
+  transfer_amount integer NOT NULL DEFAULT 0,
+  credit_amount integer NOT NULL DEFAULT 0,
+  total_amount integer NOT NULL DEFAULT 0,
+  orders_count integer NOT NULL DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  qr_amount integer DEFAULT 0,
+  submitted_by bigint,
+  submitted_at timestamp with time zone,
+  confirmed_by character varying,
+  confirmed_at timestamp with time zone,
+  status character varying DEFAULT 'draft'::character varying,
+  raw_text text,
+  CONSTRAINT sales_pkey PRIMARY KEY (id),
+  CONSTRAINT sales_submitted_by_fkey FOREIGN KEY (submitted_by) REFERENCES public.employees(id),
+  CONSTRAINT sales_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id),
+  CONSTRAINT sales_confirmed_by_fkey FOREIGN KEY (confirmed_by) REFERENCES public.users(username)
+);
+CREATE TABLE public.cash_deposits (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  deposit_date date NOT NULL,
+  branch_id integer NOT NULL,
+  expected_amount integer NOT NULL DEFAULT 0,
+  deposited_amount integer NOT NULL DEFAULT 0,
+  slip_url text,
+  status character varying NOT NULL DEFAULT 'waiting'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  bank_account_id integer,
+  deposited_by bigint,
+  verified_by character varying,
+  verified_at timestamp with time zone,
+  sale_id integer UNIQUE,
+  CONSTRAINT cash_deposits_pkey PRIMARY KEY (id),
+  CONSTRAINT cash_deposits_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
+  CONSTRAINT cash_deposits_deposited_by_fkey FOREIGN KEY (deposited_by) REFERENCES public.employees(id),
+  CONSTRAINT cash_deposits_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id),
+  CONSTRAINT cash_deposits_bank_account_id_fkey FOREIGN KEY (bank_account_id) REFERENCES public.bank_accounts(id),
+  CONSTRAINT cash_deposits_verified_by_fkey FOREIGN KEY (verified_by) REFERENCES public.users(username)
+);
+CREATE TABLE public.regions (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  name character varying NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT regions_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.bank_accounts (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  bank_name character varying NOT NULL,
+  bank_short character varying NOT NULL,
+  account_no character varying NOT NULL,
+  account_name character varying NOT NULL,
+  account_type character varying DEFAULT 'ออมทรัพย์'::character varying,
+  color_code character varying,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT bank_accounts_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.attendance (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  employee_id bigint NOT NULL,
+  branch_id integer NOT NULL,
+  work_date date NOT NULL,
+  clock_in time without time zone,
+  clock_out time without time zone,
+  late_minutes integer DEFAULT 0,
+  break_start time without time zone,
+  break_minutes integer DEFAULT 0,
+  is_break_over boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  break_end time without time zone,
+  CONSTRAINT attendance_pkey PRIMARY KEY (id),
+  CONSTRAINT attendance_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id),
+  CONSTRAINT attendance_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id)
+);
+CREATE TABLE public.attendance_alerts (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  alert_type character varying NOT NULL,
+  employee_id bigint NOT NULL,
+  branch_id integer NOT NULL,
+  work_date date NOT NULL,
+  title character varying NOT NULL,
+  detail text,
+  severity character varying DEFAULT 'warning'::character varying,
+  is_acknowledged boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  alert_time time without time zone,
+  CONSTRAINT attendance_alerts_pkey PRIMARY KEY (id),
+  CONSTRAINT attendance_alerts_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id),
+  CONSTRAINT attendance_alerts_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id)
+);
+CREATE TABLE public.warning_letter_templates (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  level character varying NOT NULL,
+  name character varying NOT NULL,
+  description text,
+  body_template text NOT NULL,
+  CONSTRAINT warning_letter_templates_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.warning_letters (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  employee_id bigint NOT NULL,
+  template_id integer,
+  level character varying NOT NULL,
+  issue_date date NOT NULL,
+  reason text NOT NULL,
+  branch_id integer,
+  issued_by character varying NOT NULL,
+  status character varying DEFAULT 'draft'::character varying,
+  is_signed_by_emp boolean DEFAULT false,
+  signed_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  alert_id integer,
+  audit_actor_type character varying,
+  audit_actor_id character varying,
+  audit_actor_name text,
+  CONSTRAINT warning_letters_pkey PRIMARY KEY (id),
+  CONSTRAINT warning_letters_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id),
+  CONSTRAINT warning_letters_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id),
+  CONSTRAINT warning_letters_template_id_fkey FOREIGN KEY (template_id) REFERENCES public.warning_letter_templates(id),
+  CONSTRAINT warning_letters_alert_id_fkey FOREIGN KEY (alert_id) REFERENCES public.attendance_alerts(id)
+);
+CREATE TABLE public.store_inspections (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  branch_id integer NOT NULL,
+  work_date date NOT NULL,
+  submitted_by bigint,
+  submit_time time without time zone NOT NULL,
+  status character varying DEFAULT 'pass'::character varying,
+  inspection_items jsonb NOT NULL,
+  reviewed_by character varying,
+  review_time time without time zone,
+  manager_note text,
+  created_at timestamp with time zone DEFAULT now(),
+  score integer DEFAULT 0,
+  photo_count integer DEFAULT 0,
+  is_late boolean DEFAULT false,
+  late_minutes integer DEFAULT 0,
+  CONSTRAINT store_inspections_pkey PRIMARY KEY (id),
+  CONSTRAINT store_inspections_submitted_by_fkey FOREIGN KEY (submitted_by) REFERENCES public.employees(id),
+  CONSTRAINT store_inspections_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id)
+);
+CREATE TABLE public.employee_branch_eligibility (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  employee_id bigint NOT NULL,
+  branch_id integer NOT NULL,
+  can_work boolean DEFAULT true,
+  is_preferred boolean DEFAULT false,
+  priority integer DEFAULT 0,
+  commission_eligible boolean DEFAULT true,
+  note text,
+  created_at timestamp with time zone DEFAULT now(),
+  audit_actor_type character varying,
+  audit_actor_id character varying,
+  audit_actor_name text,
+  CONSTRAINT employee_branch_eligibility_pkey PRIMARY KEY (id),
+  CONSTRAINT employee_branch_eligibility_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id),
+  CONSTRAINT employee_branch_eligibility_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id)
+);
+CREATE TABLE public.employee_availability_overrides (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  employee_id bigint,
+  work_date date NOT NULL,
+  availability_type character varying NOT NULL,
+  start_time time without time zone,
+  end_time time without time zone,
+  reason text,
+  created_at timestamp with time zone DEFAULT now(),
+  audit_actor_type character varying,
+  audit_actor_id character varying,
+  audit_actor_name text,
+  CONSTRAINT employee_availability_overrides_pkey PRIMARY KEY (id),
+  CONSTRAINT employee_availability_overrides_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id)
+);
+CREATE TABLE public.branch_staffing_rules (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  branch_id integer,
+  day_of_week integer NOT NULL,
+  required_staff integer DEFAULT 1,
+  shift_start time without time zone,
+  shift_end time without time zone,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT branch_staffing_rules_pkey PRIMARY KEY (id),
+  CONSTRAINT branch_staffing_rules_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id)
+);
+CREATE TABLE public.employee_availability_rules (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  employee_id bigint,
+  day_of_week integer NOT NULL,
+  availability_type character varying NOT NULL,
+  start_time time without time zone,
+  end_time time without time zone,
+  note text,
+  created_at timestamp with time zone DEFAULT now(),
+  audit_actor_type character varying,
+  audit_actor_id character varying,
+  audit_actor_name text,
+  CONSTRAINT employee_availability_rules_pkey PRIMARY KEY (id),
+  CONSTRAINT employee_availability_rules_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id)
+);
+CREATE TABLE public.employee_pay_profiles (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  employee_id bigint,
+  pay_type character varying NOT NULL,
+  monthly_salary integer DEFAULT 0,
+  daily_rate integer DEFAULT 0,
+  commission_enabled boolean DEFAULT true,
+  effective_from date NOT NULL,
+  effective_to date,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  pay_cycle character varying CHECK (pay_cycle::text = ANY (ARRAY['weekly'::character varying, 'bimonthly'::character varying, 'monthly'::character varying]::text[])),
+  break_hours numeric DEFAULT 1.0,
+  absence_deduct_mode character varying DEFAULT 'system'::character varying CHECK (absence_deduct_mode::text = ANY (ARRAY['system'::character varying, 'fixed'::character varying]::text[])),
+  absence_deduct_value numeric,
+  absence_system_calc character varying CHECK (absence_system_calc::text = ANY (ARRAY['hourly_avg'::character varying, 'hourly_fixed'::character varying]::text[])),
+  absence_hourly_rate numeric,
+  commission_rate numeric,
+  special_allowance integer DEFAULT 0,
+  commission_calc_type character varying DEFAULT 'scheduled_assigned_branch_days'::character varying CHECK (commission_calc_type::text = ANY (ARRAY['scheduled_assigned_branch_days'::character varying::text, 'actual_work_days_all_branches'::character varying::text, 'period_days_responsible_branches'::character varying::text])),
+  social_security_enabled boolean DEFAULT true,
+  social_security_amount numeric DEFAULT 0,
+  absence_deduct_unit character varying CHECK (absence_deduct_unit IS NULL OR (absence_deduct_unit::text = ANY (ARRAY['minute'::character varying::text, 'occurrence'::character varying::text, 'day'::character varying::text, 'hour'::character varying::text]))),
+  audit_actor_type character varying,
+  audit_actor_id character varying,
+  audit_actor_name text,
+  CONSTRAINT employee_pay_profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT employee_pay_profiles_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id)
+);
+CREATE TABLE public.sales_logs (
+  id bigint NOT NULL DEFAULT nextval('sales_logs_id_seq'::regclass),
+  sale_id integer NOT NULL,
+  field_name character varying,
+  old_value text,
+  new_value text,
+  reason text,
+  edited_by bigint,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT sales_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT sales_logs_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
+  CONSTRAINT sales_logs_edited_by_fkey FOREIGN KEY (edited_by) REFERENCES public.employees(id)
+);
+CREATE TABLE public.attachments (
+  id bigint NOT NULL DEFAULT nextval('attachments_id_seq'::regclass),
+  entity_type character varying,
+  entity_id integer,
+  file_url text,
+  created_at timestamp with time zone DEFAULT now(),
+  storage_bucket text,
+  storage_path text,
+  file_name text,
+  file_type text,
+  file_size bigint,
+  CONSTRAINT attachments_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.bank_transactions (
+  id bigint NOT NULL DEFAULT nextval('bank_transactions_id_seq'::regclass),
+  bank_account_id integer,
+  transaction_date timestamp with time zone,
+  amount numeric,
+  reference_no character varying,
+  description text,
+  matched boolean DEFAULT false,
+  deposit_id integer,
+  CONSTRAINT bank_transactions_pkey PRIMARY KEY (id),
+  CONSTRAINT bank_transactions_bank_account_fkey FOREIGN KEY (bank_account_id) REFERENCES public.bank_accounts(id)
+);
+CREATE TABLE public.inspection_settings (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  branch_id integer NOT NULL UNIQUE,
+  cctv_count integer DEFAULT 0,
+  shelf_count integer DEFAULT 0,
+  required_photos jsonb DEFAULT '[]'::jsonb,
+  checklists jsonb DEFAULT '[]'::jsonb,
+  required_products jsonb DEFAULT '[]'::jsonb,
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT inspection_settings_pkey PRIMARY KEY (id),
+  CONSTRAINT inspection_settings_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id)
+);
+CREATE TABLE public.inspection_logs (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  inspection_id integer,
+  user_name character varying,
+  action character varying NOT NULL,
+  description text,
+  source character varying DEFAULT 'dashboard'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT inspection_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT inspection_logs_inspection_id_fkey FOREIGN KEY (inspection_id) REFERENCES public.store_inspections(id)
+);
+CREATE TABLE public.system_audit_logs (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  user_name character varying NOT NULL,
+  action character varying NOT NULL,
+  table_name character varying NOT NULL,
+  record_id character varying,
+  source character varying DEFAULT 'dashboard'::character varying,
+  description text,
+  old_value jsonb DEFAULT '{}'::jsonb,
+  new_value jsonb DEFAULT '{}'::jsonb,
+  module character varying,
+  branch_id integer,
+  entity_name text,
+  actor_type character varying,
+  actor_id character varying,
+  CONSTRAINT system_audit_logs_pkey PRIMARY KEY (id)
+);

@@ -1,0 +1,50 @@
+// In-memory store for sales flow state (temporary; can migrate to Redis/DB later)
+const flowStates = new Map();
+
+const FLOW_STATES = {
+  AWAITING_TEXT: 'awaiting_text',
+  TEXT_RECEIVED: 'text_received',
+  AWAITING_IMAGES: 'awaiting_images',
+  IMAGES_COMPLETE: 'images_complete',
+  CONFIRMED_DRAFT: 'confirmed_draft',
+  AWAITING_APPROVAL: 'awaiting_approval',
+  APPROVED: 'approved',
+};
+
+// Key: userId (for tracking per user; one active flow per user at a time)
+function getFlowState(userId) {
+  return flowStates.get(userId) || null;
+}
+
+function setFlowState(userId, state) {
+  if (!state) {
+    flowStates.delete(userId);
+    return;
+  }
+  flowStates.set(userId, { ...state, updated_at: Date.now() });
+}
+
+function updateFlowState(userId, updates) {
+  const key = userId;
+  const existing = flowStates.get(key) || {};
+  flowStates.set(key, { ...existing, ...updates, updated_at: Date.now() });
+  return flowStates.get(key);
+}
+
+// Cleanup old states (older than 1 hour)
+setInterval(() => {
+  const now = Date.now();
+  const MAX_AGE = 3600000; // 1 hour
+  for (const [key, state] of flowStates.entries()) {
+    if (now - state.updated_at > MAX_AGE) {
+      flowStates.delete(key);
+    }
+  }
+}, 60000); // every minute
+
+module.exports = {
+  FLOW_STATES,
+  getFlowState,
+  setFlowState,
+  updateFlowState,
+};
