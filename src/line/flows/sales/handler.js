@@ -1,9 +1,14 @@
 const { parseSalesText } = require('./parser');
 const { getFlowState, setFlowState, updateFlowState, FLOW_STATES } = require('./state');
-const { createDraftSale, updateSaleStatus, saveAttachments } = require('./service');
+const { createDraftSale, saveAttachments } = require('./service');
 const { replyOrPush } = require('../../reply');
 const employeeRepo = require('../../../../backend/repositories/employee.repo');
 const branchRepo = require('../../../../backend/repositories/branch.repo');
+const {
+  salesSummaryFlex,
+  imageReceivedFlex,
+  successFlex
+} = require('../../flex/salesFlex');
 
 async function handleTextMessage(event) {
   const text = event.message.text || '';
@@ -42,14 +47,16 @@ async function handleTextMessage(event) {
     replyToken: event.replyToken,
   });
 
-  // reply: ask for images
   await replyOrPush({
     replyToken: event.replyToken,
     messages: [
-      {
-        type: 'text',
-        text: `พร้อมบันทึกยอดขาย ${branch.code}\n\nกรุณาส่งรูปยอดขาย (กี่รูปก็ได้)\nแล้วพิมพ์: ยืนยัน ${branch.code}`,
-      },
+      salesSummaryFlex({
+        branchCode: branch.code,
+        cash: parsed.cash_amount,
+        credit: parsed.credit_amount,
+        transfer: parsed.transfer_amount,
+        total: parsed.total_sales,
+      }),
     ],
   });
 }
@@ -66,7 +73,7 @@ async function handleImageMessage(event) {
   const flowState = getFlowState(lineUserId);
 
   if (!flowState || flowState.status !== FLOW_STATES.AWAITING_IMAGES) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบการรายงานยอดขายที่กำลังอยู่ในระหว่างดำเนิน' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบการรายงานยอดขายที่กำลังอยู่ในระหว่างดำเนินการ' }] });
     return;
   }
 
@@ -81,7 +88,12 @@ async function handleImageMessage(event) {
   const imageCount = flowState.images.length;
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [{ type: 'text', text: `ได้รับรูปที่ ${imageCount} แล้ว\n\nส่งรูปต่ออีกหรือพิมพ์: ยืนยัน ${flowState.branch_code}` }],
+    messages: [
+      imageReceivedFlex(
+        flowState.branch_code,
+        imageCount
+      ),
+    ],
   });
 }
 
@@ -97,12 +109,11 @@ async function handleConfirmation(event) {
 
   const flowState = getFlowState(lineUserId);
   if (!flowState || flowState.status !== FLOW_STATES.AWAITING_IMAGES) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบการรายงานยอดขายที่รอการยืนยัน' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบยอดขายที่รอการยืนยัน' }] });
     return;
   }
 
   // Extract branch code from confirmation text (e.g., "ยืนยัน" or "ยืนยัน ONM")
-  // Allow just "ยืนยัน" without branch code, or with branch code for verification
   const confirmMatch = text.match(/ยืนยัน(?:\s+(\S+))?/i);
   
   if (!confirmMatch) {
@@ -149,14 +160,15 @@ async function handleConfirmation(event) {
     // Clear flow state
     setFlowState(lineUserId, null);
 
-    // Reply with confirmation
+    // Reply with confirmation using successFlex
     await replyOrPush({
       replyToken: event.replyToken,
       messages: [
-        {
-          type: 'text',
-          text: `ยืนยันยอดขาย ${flowState.branch_code} เรียบร้อย\nID: ${sale.id}\nรูป: ${imageCount} รูป\n\nรอการอนุมัติจากผู้จัดการ`,
-        },
+        successFlex({
+          branchCode: flowState.branch_code,
+          saleId: sale.id,
+          imageCount: imageCount
+        })
       ],
     });
   } catch (error) {

@@ -1,5 +1,4 @@
 const { supabase } = require('../../../../backend/config/supabase');
-// ดึงทั้ง lineClient และ blobClient ออกมาจากไฟล์คอนฟิกของคุณโดยตรง
 const { lineClient, blobClient } = require('../../../../backend/config/line');
 const { logEvent } = require('../../utils/audit');
 
@@ -49,10 +48,8 @@ async function saveAttachments(saleId, messages) {
         continue;
       }
 
-      // ดึงข้อมูลรูปภาพจาก LINE Server โดยใช้ blobClient ของแท้จาก config (ได้เป็น ReadableStream)
       const contentResponse = await blobClient.getMessageContent(msgId);
       
-      // ✅ แก้ไข: วนลูปอ่านข้อมูลทีละชิ้นจาก Stream แล้วรวบรวมเป็น Buffer ตัวเดียวโดยตรง
       const chunks = [];
       for await (const chunk of contentResponse) {
         chunks.push(chunk);
@@ -84,12 +81,10 @@ async function saveAttachments(saleId, messages) {
 
       if (uploadError) throw uploadError;
 
-      // ดึง Public URL ของไฟล์
       const { data: publicUrlData } = supabase.storage
         .from('documents')
         .getPublicUrl(storagePath);
 
-      // บันทึกข้อมูลลงฐานข้อมูล Supabase ตาราง 'attachments'
       const { data: attachmentRecord, error: dbError } = await supabase
         .from('attachments')
         .insert([{
