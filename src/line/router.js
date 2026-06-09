@@ -1,7 +1,7 @@
 const openHandler = require('./flows/open/handler');
 const inspectHandler = require('./flows/inspect/handler');
 const registerHandler = require('./flows/register/handler');
-const { handleTextMessage, handleImageMessage } = require('./flows/sales/handler');
+const { handleTextMessage, handleImageMessage, handleUploadPrompt, handleEditFlow } = require('./flows/sales/handler');
 
 async function handleEvent(event) {
   try {
@@ -47,10 +47,20 @@ async function handleEvent(event) {
       return handleTextMessage(event);
     }
 
+    if (lower.includes('อัพรูป') || lower.includes('อัปโหลดรูป')) {
+      console.log('📤 Routing to sales upload prompt');
+      return handleUploadPrompt && handleUploadPrompt(event);
+    }
+
     if (lower.includes('ยืนยัน')) {
       console.log('✅ Routing to sales confirmation');
       const { handleConfirmation } = require('./flows/sales/handler');
       return handleConfirmation && handleConfirmation(event);
+    }
+
+    if (lower.includes('แก้ไข')) {
+      console.log('✏️ Routing to sales edit');
+      return handleEditFlow && handleEditFlow(event);
     }
 
     if (lower.includes('ฝาก') || lower.includes('ฝากเงิน')) {

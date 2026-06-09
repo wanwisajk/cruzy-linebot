@@ -4,6 +4,7 @@ const flowStates = new Map();
 const FLOW_STATES = {
   AWAITING_TEXT: 'awaiting_text',
   TEXT_RECEIVED: 'text_received',
+  AWAITING_CONFIRMATION: 'awaiting_confirmation',
   AWAITING_IMAGES: 'awaiting_images',
   IMAGES_COMPLETE: 'images_complete',
   CONFIRMED_DRAFT: 'confirmed_draft',

@@ -23,22 +23,20 @@ async function handleTextMessage(event) {
   const employee = await employeeRepo.findByLineUserId(lineUserId);
   const parsed = parseSalesText(text);
 
-  // if no branch code in text, skip
   if (!parsed.branch_code) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบรหัสสาขา กรุณาพิมพ์: #ยอดขาย ONM' }] });
     return;
   }
 
-  // find branch by code
   const branch = await branchRepo.findByCode(parsed.branch_code);
   if (!branch) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ไม่พบสาขา: ${parsed.branch_code}` }] });
     return;
   }
 
-  // Store in state WITHOUT creating DB record yet
+  // เริ่มต้น State ให้อยู่ในขั้นตอนรอการยืนยันสรุปยอดก่อน
   setFlowState(lineUserId, {
-    status: FLOW_STATES.AWAITING_IMAGES,
+    status: FLOW_STATES.AWAITING_CONFIRMATION,
     branch_id: branch.id,
     branch_code: parsed.branch_code,
     images: [],
@@ -65,19 +63,18 @@ async function handleImageMessage(event) {
   const source = event.source || {};
   const lineUserId = source.userId || null;
 
-  if (!lineUserId) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่สามารถระบุผู้ส่ง' }] });
-    return;
-  }
+  // 1. ถ้าแกะสิทธิ์ระบุตัวตนไม่ได้ ให้เงียบไปเลย ไม่ต้องพ่น text กวนหน้าแชท
+  if (!lineUserId) return;
 
   const flowState = getFlowState(lineUserId);
 
+  // 2. 🔥 ปรับตรงนี้: ถ้าพนักงานส่งรูปเข้ามาเฉยๆ โดยที่ไม่ได้กำลังทำ Flow รายงานยอดขาย
+  // ให้ return ออกไปเงียบๆ ทันที ไม่ต้องส่งข้อความไปขัดจังหวะการคุยปกติ
   if (!flowState || flowState.status !== FLOW_STATES.AWAITING_IMAGES) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบการรายงานยอดขายที่กำลังอยู่ในระหว่างดำเนินการ' }] });
     return;
   }
 
-  // Store image message id
+  // 3. บันทึกข้อมูลรูปภาพสะสมเข้าใน State Memory เงียบๆ
   flowState.images.push({
     message_id: event.message.id,
     received_at: new Date().toISOString(),
@@ -86,14 +83,36 @@ async function handleImageMessage(event) {
   updateFlowState(lineUserId, flowState);
 
   const imageCount = flowState.images.length;
+
+  // 4. 🔥 ตรวจสอบจำนวนรูป: เด้งหน้าจอสรุปให้กดส่งงาน เมื่อรูปครบ 3 รูปเท่านั้น
+  if (imageCount === 3) {
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [
+        imageReceivedFlex(flowState.branch_code, imageCount),
+      ],
+    });
+  }
+}
+
+async function handleUploadPrompt(event) {
+  const source = event.source || {};
+  const lineUserId = source.userId || null;
+
+  if (!lineUserId) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่สามารถระบุผู้ส่ง' }] });
+    return;
+  }
+
+  const flowState = getFlowState(lineUserId);
+  if (!flowState || flowState.status !== FLOW_STATES.AWAITING_IMAGES) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาพิมพ์รายงานยอดขายใหม่ก่อนส่งรูปภาพ' }] });
+    return;
+  }
+
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [
-      imageReceivedFlex(
-        flowState.branch_code,
-        imageCount
-      ),
-    ],
+    messages: [{ type: 'text', text: 'กรุณาส่งรูปหลักฐานได้เลย เมื่อส่งแล้วระบบจะแจ้งจำนวนรูปที่ได้รับในระบบ' }],
   });
 }
 
@@ -108,40 +127,63 @@ async function handleConfirmation(event) {
   }
 
   const flowState = getFlowState(lineUserId);
-  if (!flowState || flowState.status !== FLOW_STATES.AWAITING_IMAGES) {
+  if (!flowState) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบยอดขายที่รอการยืนยัน' }] });
     return;
   }
 
-  // Extract branch code from confirmation text (e.g., "ยืนยัน" or "ยืนยัน ONM")
   const confirmMatch = text.match(/ยืนยัน(?:\s+(\S+))?/i);
-  
-  if (!confirmMatch) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาพิมพ์: ยืนยัน' }] });
+  const branchCodeFromText = confirmMatch[1] ? confirmMatch[1].toUpperCase() : null;
+  if (confirmMatch && branchCodeFromText && branchCodeFromText !== flowState.branch_code) {
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: `รหัสสาขาไม่ตรงกัน กรุณาพิมพ์: ยืนยัน ${flowState.branch_code}` }],
+    });
     return;
   }
 
-  // If branch code is provided, verify it matches
-  const branchCodeFromText = confirmMatch[1] ? confirmMatch[1].toUpperCase() : null;
-  if (branchCodeFromText && branchCodeFromText !== flowState.branch_code) {
-    await replyOrPush({ 
-      replyToken: event.replyToken, 
-      messages: [{ 
-        type: 'text', 
-        text: `รหัสสาขาไม่ตรงกัน กรุณาพิมพ์: ยืนยัน ${flowState.branch_code}` 
-      }] 
+  if (flowState.status === FLOW_STATES.AWAITING_CONFIRMATION) {
+    if (!confirmMatch) {
+      await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณากดปุ่มหรือพิมพ์: ยืนยัน' }] });
+      return;
+    }
+
+    await updateFlowState(lineUserId, { status: FLOW_STATES.AWAITING_IMAGES });
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [
+        {
+          type: 'text',
+          text: 'ยืนยันยอดขายเรียบร้อยแล้ว กรุณาส่งรูปหลักฐาน 3 รูปขึ้นไป เมื่อส่งครบแล้วให้พิมพ์: ยืนยัน',
+          quickReply: {
+            items: [
+              {
+                type: 'action',
+                action: {
+                  type: 'cameraRoll',
+                  label: '📸 ส่งรูปภาพ'
+                }
+              }
+            ]
+          }
+        }
+      ],
     });
+    return;
+  }
+
+  if (flowState.status !== FLOW_STATES.AWAITING_IMAGES) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบยอดขายที่รอการยืนยัน หรือท่านยังไม่ได้ส่งรูปภาพหลักฐาน' }] });
     return;
   }
 
   const imageCount = flowState.images.length;
   if (imageCount === 0) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาส่งรูปอย่างน้อย 1 รูป' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาส่งรูปหลักฐานอย่างน้อย 1 รูปก่อนกดยืนยันสำเร็จ' }] });
     return;
   }
 
   try {
-    // Create draft sale in DB now
     const sale = await createDraftSale({
       branchId: flowState.branch_id,
       date: flowState.parsed_data.date,
@@ -153,14 +195,12 @@ async function handleConfirmation(event) {
       submittedBy: flowState.employee_id,
     });
 
-    // Save attachments (images)
     const messageIds = flowState.images.map(img => img.message_id);
     await saveAttachments(sale.id, messageIds);
 
-    // Clear flow state
+    // เคลียร์ Flow ออกจาก Memory
     setFlowState(lineUserId, null);
 
-    // Reply with confirmation using successFlex
     await replyOrPush({
       replyToken: event.replyToken,
       messages: [
@@ -172,7 +212,6 @@ async function handleConfirmation(event) {
       ],
     });
   } catch (error) {
-    // If error is duplicate key constraint, inform user
     if (error.code === '23505') {
       await replyOrPush({
         replyToken: event.replyToken,
@@ -187,4 +226,26 @@ async function handleConfirmation(event) {
   }
 }
 
-module.exports = { handleTextMessage, handleImageMessage, handleConfirmation };
+// 🔥 เพิ่มฟังก์ชันยกเลิก / แก้ไข Flow ข้อมูล
+async function handleEditFlow(event) {
+  const source = event.source || {};
+  const lineUserId = source.userId || null;
+
+  if (!lineUserId) return;
+
+  const flowState = getFlowState(lineUserId);
+  if (!flowState) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบข้อมูลยอดขายที่กำลังดำเนินการอยู่' }] });
+    return;
+  }
+
+  setFlowState(lineUserId, null);
+  await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ล้างข้อมูลเดิมเรียบร้อยแล้ว กรุณาพิมพ์รายงานยอดขายเข้ามาใหม่อีกครั้ง' }] });
+}
+module.exports = { 
+  handleTextMessage, 
+  handleImageMessage, 
+  handleUploadPrompt,
+  handleConfirmation,
+  handleEditFlow 
+};

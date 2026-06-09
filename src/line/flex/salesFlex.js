@@ -68,12 +68,38 @@ function salesSummaryFlex({ branchCode, cash, credit, transfer, total }) {
           { type: 'separator', margin: 'lg' },
           {
             type: 'text',
-            text: '💡 กรุณาส่งรูปภาพหลักฐานยอดขาย จากนั้นกดปุ่ม "ยืนยัน"',
+            text: '💡 หากข้อมูลถูกต้องให้กด ✅ ยืนยันยอดขาย หรือกด ✏️ แก้ไขข้อมูล',
             size: 'xs',
             color: '#888888',
             style: 'italic',
             wrap: true,
             margin: 'md'
+          }
+        ]
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'sm',
+        contents: [
+          {
+            type: 'button',
+            style: 'primary',
+            color: '#27AE60',
+            action: {
+              type: 'message',
+              label: '✅ ยืนยันยอดขาย',
+              text: 'ยืนยัน'
+            }
+          },
+          {
+            type: 'button',
+            style: 'secondary',
+            action: {
+              type: 'message',
+              label: '✏️ แก้ไขข้อมูล',
+              text: 'แก้ไข'
+            }
           }
         ]
       }
@@ -130,12 +156,23 @@ function imageReceivedFlex(branchCode, imageCount) {
                 margin: 'xs'
               }
             ]
+          },
+          {
+            type: 'text',
+            text: imageCount >= 3
+              ? '✅ ส่งครบ 3 รูปแล้ว ถ้าพร้อมยืนยันให้กดปุ่ม ยืนยันส่งยอดขาย' 
+              : `ส่งไปแล้ว ${imageCount} รูป ส่งเพิ่มให้ครบ 3 รูป แล้วค่อยกดยืนยัน`,
+            size: 'xs',
+            color: '#888888',
+            wrap: true,
+            margin: 'md'
           }
         ]
       },
       footer: {
         type: 'box',
         layout: 'vertical',
+        spacing: 'sm',
         contents: [
           {
             type: 'button',
@@ -145,6 +182,15 @@ function imageReceivedFlex(branchCode, imageCount) {
               type: 'message',
               label: '✅ ยืนยันส่งยอดขาย',
               text: `ยืนยัน ${branchCode}`
+            }
+          },
+          {
+            type: 'button',
+            style: 'secondary',
+            action: {
+              type: 'message',
+              label: '📸 ส่งรูปภาพเพิ่ม',
+              text: 'อัพรูป'
             }
           }
         ]
