@@ -12,9 +12,8 @@ function parseSalesText(text) {
     raw_text: raw,
   };
 
-  // Extract branch code from first line like "#ยอดขาย onm"
   const firstLine = lines[0] || '';
-  const branchMatch = firstLine.match(/#ยอดขาย\s+(\S+)/i);
+  const branchMatch = firstLine.match(/ยอดขาย\s+(\S+)/i);
   if (branchMatch) {
     result.branch_code = branchMatch[1].toUpperCase();
   }

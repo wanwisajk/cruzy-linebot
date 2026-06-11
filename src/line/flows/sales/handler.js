@@ -28,7 +28,7 @@ async function handleTextMessage(event) {
   const parsed = parseSalesText(text);
 
   if (!parsed.branch_code) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบรหัสสาขา กรุณาพิมพ์: #ยอดขาย ONM' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบรหัสสาขา กรุณาพิมพ์: ยอดขาย ONM' }] });
     return;
   }
 
