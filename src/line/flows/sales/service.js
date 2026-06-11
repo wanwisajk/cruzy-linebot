@@ -31,6 +31,28 @@ async function updateSaleStatus(saleId, status) {
   return data;
 }
 
+async function updateSaleStatusWithTimestamp(saleId, status, options = {}) {
+  const payload = {
+    status,
+    confirmed_at: new Date().toISOString()
+  };
+
+  if (options.confirmedByUsername) {
+    payload.confirmed_by = options.confirmedByUsername;
+  }
+
+  const { data, error } = await supabase.from('sales').update(payload).eq('id', saleId).select().single();
+  if (error) throw error;
+
+  await logEvent('sales_status_updated', {
+    sale_id: saleId,
+    status,
+    confirmed_at: payload.confirmed_at,
+    confirmed_by: payload.confirmed_by || null,
+  });
+  return data;
+}
+
 async function saveAttachments(saleId, messages) {
   if (!messages || messages.length === 0) return [];
 
@@ -111,4 +133,4 @@ async function saveAttachments(saleId, messages) {
   return attachments;
 }
 
-module.exports = { createDraftSale, updateSaleStatus, saveAttachments };
+module.exports = { createDraftSale, updateSaleStatus, updateSaleStatusWithTimestamp, saveAttachments };

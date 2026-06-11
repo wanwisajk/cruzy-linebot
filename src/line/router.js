@@ -47,16 +47,21 @@ async function handleEvent(event) {
       return handleTextMessage(event);
     }
 
-    if (lower.includes('อัพรูป') || lower.includes('อัปโหลดรูป')) {
+    if (lower.includes('ส่งรูป') || lower.includes('อัพรูป') || lower.includes('อัปโหลดรูป')) {
       console.log('📤 Routing to sales upload prompt');
       return handleUploadPrompt && handleUploadPrompt(event);
     }
 
-    if (lower.includes('ยืนยัน')) {
-      console.log('✅ Routing to sales confirmation');
-      const { handleConfirmation } = require('./flows/sales/handler');
-      return handleConfirmation && handleConfirmation(event);
-    }
+if (
+  lower.includes('ยืนยัน') ||
+  lower === 'บันทึกยอดขาย'
+) {
+  console.log('✅ Routing to sales confirmation');
+
+  const { handleConfirmation } = require('./flows/sales/handler');
+
+  return handleConfirmation && handleConfirmation(event);
+}
 
     if (lower.includes('แก้ไข')) {
       console.log('✏️ Routing to sales edit');

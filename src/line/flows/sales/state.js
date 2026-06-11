@@ -6,12 +6,13 @@ const FLOW_STATES = {
   TEXT_RECEIVED: 'text_received',
   AWAITING_CONFIRMATION: 'awaiting_confirmation',
   AWAITING_IMAGES: 'awaiting_images',
+  AWAITING_FINAL_CONFIRMATION: 'awaiting_final_confirmation',
   IMAGES_COMPLETE: 'images_complete',
   CONFIRMED_DRAFT: 'confirmed_draft',
   AWAITING_APPROVAL: 'awaiting_approval',
   APPROVED: 'approved',
+  REJECTED: 'rejected',
 };
-
 // Key: userId (for tracking per user; one active flow per user at a time)
 function getFlowState(userId) {
   return flowStates.get(userId) || null;
