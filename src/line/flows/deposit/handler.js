@@ -5,12 +5,13 @@ const { recordDeposit, uploadSlipImage } = require('./service');
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./state');
 const { logEvent } = require('../../utils/audit');
 const employeeRepo = require('../../../../backend/repositories/employee.repo');
-const branchRepo = require('../../../../backend/repositories/branch.repo');
+const { resolveBranchFromEvent } = require('../../utils/context');
 
 async function handle(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
   const source = event.source || {};
   const actor = source.userId || null;
+  const eventDate = event.timestamp ? new Date(event.timestamp) : new Date();
 
   if (!actor) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่สามารถระบุตัวตนผู้ส่งได้' }] });
@@ -24,20 +25,15 @@ async function handle(event) {
     return;
   }
 
-  const parsed = parseDepositText(text);
+  const parsed = parseDepositText(text, eventDate);
   if (!parsed.amount || parsed.amount <= 0) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาพิมพ์ยอดฝาก เช่น: ฝาก CCA 1,500' }] });
     return;
   }
 
-  if (!parsed.branchCode) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาระบุสาขาด้วย เช่น: ฝาก CCA 1,500' }] });
-    return;
-  }
-
-  const branch = await branchRepo.findByCode(parsed.branchCode);
+  const { branch, lineGroupId } = await resolveBranchFromEvent(event, text);
   if (!branch) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ไม่พบสาขา ${parsed.branchCode}` }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์เช่น ฝาก CCA 1,500' }] });
     return;
   }
 
@@ -49,6 +45,10 @@ async function handle(event) {
     branchId: branch.id,
     branchCode: branch.code,
     branchName: branch.name,
+    lineGroupId,
+    lineUserId: actor,
+    messageText: text,
+    submittedAt: eventDate.toISOString(),
     diff: parsed.diff,
     actor,
     employeeId: employee ? employee.id : null,
@@ -110,6 +110,11 @@ async function handleImageMessage(event) {
     deposited_amount: state.amount,
     bank: state.bank || null,
     slip_url: slipUrl,
+    source: 'line',
+    line_group_id: state.lineGroupId,
+    line_user_id: state.lineUserId,
+    message_text: state.messageText,
+    submitted_at: state.submittedAt,
   });
 
   await logEvent('deposit_recorded', { deposit: created, actor });

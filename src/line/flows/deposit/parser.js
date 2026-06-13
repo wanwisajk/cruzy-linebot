@@ -1,8 +1,8 @@
 const { parseDateFromText } = require('../../utils/attendance');
 
-function parseDepositText(text) {
+function parseDepositText(text, fallbackDate) {
   const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const result = { amount: 0, bank: null, branchCode: null, depositDate: parseDateFromText(text), diff: 0 };
+  const result = { amount: 0, bank: null, branchCode: null, depositDate: parseDateFromText(text, fallbackDate), diff: 0 };
   const wholeText = lines.join(' ');
 
   const branchMatch = wholeText.match(/\b([A-Z]{2,5})\b/i);

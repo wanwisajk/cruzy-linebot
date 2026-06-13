@@ -28,7 +28,19 @@ async function uploadSlipImage(messageId) {
   return publicUrlData.publicUrl;
 }
 
-async function recordDeposit({ deposit_date, branch_id, deposited_by, deposited_amount, bank, slip_url }) {
+async function recordDeposit({
+  deposit_date,
+  branch_id,
+  deposited_by,
+  deposited_amount,
+  bank,
+  slip_url,
+  source,
+  line_group_id,
+  line_user_id,
+  message_text,
+  submitted_at,
+}) {
   const payload = {
     deposit_date: deposit_date || new Date().toISOString().slice(0,10),
     branch_id,
@@ -38,10 +50,15 @@ async function recordDeposit({ deposit_date, branch_id, deposited_by, deposited_
     status: 'waiting',
     bank_account_id: null,
     deposited_by: deposited_by || null,
-    created_at: new Date().toISOString(),
+    created_at: submitted_at || new Date().toISOString(),
+    source: source || 'line',
+    line_group_id: line_group_id || null,
+    line_user_id: line_user_id || null,
+    message_text: message_text || null,
+    submitted_at: submitted_at || new Date().toISOString(),
   };
 
-  const { data, error } = await supabase.from('cash_deposits').insert([payload]).select().single();
+  const { data, error } = await supabase.from('cash_deposits').insert([payload]).select('*').single();
   if (error) throw error;
   return data;
 }

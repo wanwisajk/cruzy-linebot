@@ -7,10 +7,9 @@ async function handle(event) {
   const source = event.source || {};
   const lineUserId = source.userId || null;
 
-  // Parse "สมัคร <id>" or "register <id>"
-  const match = text.match(/^(?:สมัคร|register)\s+(\d+)$/i);
+  const match = text.match(/^(?:พนักงาน|register)\s+(\d+)$/i);
   if (!match) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูป: สมัคร <หมายเลข>' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูป: พนักงาน <หมายเลข>' }] });
     return;
   }
 

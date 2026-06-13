@@ -47,6 +47,7 @@ async function updateLineUserId(id, lineUserId) {
     .from('employees')
     .update({ line_user_id: lineUserId })
     .eq('id', id)
+    .select('*')
     .single();
 
   if (error) {

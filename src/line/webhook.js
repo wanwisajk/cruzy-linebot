@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { line, lineConfig } = require('../../backend/config/line');
 const { handleEvent } = require('./router');
+const { runLineJobs } = require('./services/lineJobs');
 
 // LINE signature verification middleware
 function verifyLineSignature(req, res, next) {
@@ -41,6 +42,7 @@ router.post('/', async (req, res, next) => {
 
     const events = requestBody.events || [];
     console.log(`📨 Received ${events.length} event(s)`);
+    runLineJobs().catch((err) => console.warn('LINE jobs skipped:', err.message || err));
     
     const results = await Promise.allSettled(events.map((ev) => 
       handleEvent(ev).catch((err) => {

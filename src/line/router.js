@@ -7,6 +7,19 @@ const { getDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
 const commandFlex = require('./flex/commandFlex');
 const employeeHandler = require('./flows/employee/handler');
 const { replyOrPush } = require('./reply');
+const linkHandler = require('./flows/link/handler');
+const { logInboundLineEvent } = require('./utils/audit');
+const { hasInspectionState } = require('./flows/inspect/state');
+const { hasLeaveState } = require('./flows/leave/state');
+const leaveHandler = require('./flows/leave/handler');
+
+function isOpenShopCommand(text) {
+  return /เปิด\s*ร้าน/i.test(text);
+}
+
+function isCloseShopCommand(text) {
+  return /ปิด\s*ร้าน/i.test(text) || /ปิด้ราน/i.test(text) || /ปิดราน/i.test(text);
+}
 
 async function handleEvent(event) {
   try {
@@ -15,6 +28,7 @@ async function handleEvent(event) {
       message_type: event.message?.type,
       text: event.message?.text?.substring(0, 50),
     });
+    await logInboundLineEvent(event);
 
     // handle postbacks
     if (event.type === 'postback') {
@@ -22,10 +36,18 @@ async function handleEvent(event) {
       return postbackHandler.handlePostback(event);
     }
 
-    // Handle image events for deposit or sales flow
-    if (event.message && event.message.type === 'image') {
+    // Handle file/image events for active multi-step flows
+    if (event.message && (event.message.type === 'image' || event.message.type === 'file')) {
       const source = event.source || {};
       const lineUserId = source.userId || null;
+      if (lineUserId && hasLeaveState(lineUserId)) {
+        return leaveHandler.handleAttachmentMessage(event);
+      }
+      if (lineUserId && hasInspectionState(lineUserId)) {
+        if (event.message.type !== 'image') return null;
+        return inspectHandler.handleImageMessage(event);
+      }
+      if (event.message.type === 'file') return null;
       const depositState = lineUserId ? getDepositState(lineUserId) : null;
       if (depositState && depositState.status === DEPOSIT_STATUS.AWAITING_SLIP) {
         return depositHandler.handleImageMessage(event);
@@ -42,7 +64,17 @@ async function handleEvent(event) {
       return replyOrPush({ replyToken: event.replyToken, messages: [commandFlex()] });
     }
 
-    if (/^(?:สมัคร|register)\s+\d+/i.test(text)) {
+    if (/^สาขา\s+\d+$/i.test(text.trim())) {
+      console.log('🔗 Routing to branch LINE group link');
+      return linkHandler.handleBranchLink(event);
+    }
+
+    if (/^แอดมิน\s+\d+$/i.test(text.trim())) {
+      console.log('🔗 Routing to admin LINE user link');
+      return linkHandler.handleAdminLink(event);
+    }
+
+    if (/^(?:พนักงาน|register)\s+\d+/i.test(text)) {
       console.log('🔗 Routing to register handler');
       return registerHandler.handle(event);
     }
@@ -62,16 +94,42 @@ async function handleEvent(event) {
       return employeeHandler.handleAttendanceAlert(event);
     }
 
-    if (lower.includes('เปิดร้าน')) {
+    if (isOpenShopCommand(text)) {
       console.log('🚪 Routing to open shop handler');
       return openHandler.handle(event);
     }
 
-    if (lower.includes('ปิดร้าน')) {
+    if (isCloseShopCommand(text)) {
       console.log('🌙 Routing to close shop handler');
       const closeHandler = require('./flows/close/handler');
       return closeHandler.handle(event);
     }
+
+    if (
+      event.source &&
+      event.source.userId &&
+      hasLeaveState(event.source.userId) &&
+      (lower === 'เสร็จ' || lower === 'ข้าม' || lower === 'ยืนยันส่ง' || lower === 'ยกเลิก' || lower.includes('วันที่เริ่มลา'))
+    ) {
+      console.log('🏖️ Routing to active leave flow');
+      return leaveHandler.handle(event);
+    }
+
+    if (lower === 'ตรวจเสร็จ' || lower === 'ยืนยันส่ง') {
+      console.log('🔍 Routing to active inspect flow');
+      return inspectHandler.handle(event);
+    }
+
+if (
+  lower.includes('ยืนยัน') ||
+  lower === 'บันทึกยอดขาย'
+) {
+  console.log('✅ Routing to sales confirmation');
+
+  const { handleConfirmation } = require('./flows/sales/handler');
+
+  return handleConfirmation && handleConfirmation(event);
+}
 
     if (lower.includes('ตรวจร้าน')) {
       console.log('🔍 Routing to inspect handler');
@@ -88,17 +146,6 @@ async function handleEvent(event) {
       return handleUploadPrompt && handleUploadPrompt(event);
     }
 
-if (
-  lower.includes('ยืนยัน') ||
-  lower === 'บันทึกยอดขาย'
-) {
-  console.log('✅ Routing to sales confirmation');
-
-  const { handleConfirmation } = require('./flows/sales/handler');
-
-  return handleConfirmation && handleConfirmation(event);
-}
-
     if (lower.includes('แก้ไข')) {
       console.log('✏️ Routing to sales edit');
       return handleEditFlow && handleEditFlow(event);
@@ -111,7 +158,6 @@ if (
 
     if (lower.includes('ขอลา') || lower.includes('ลา')) {
       console.log('🏖️ Routing to leave handler');
-      const leaveHandler = require('./flows/leave/handler');
       return leaveHandler.handle(event);
     }
 

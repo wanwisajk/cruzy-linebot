@@ -4,6 +4,7 @@ const { createDraftSale, saveAttachments } = require('./service');
 const { replyOrPush } = require('../../reply');
 const employeeRepo = require('../../../../backend/repositories/employee.repo');
 const branchRepo = require('../../../../backend/repositories/branch.repo');
+const { resolveBranchFromEvent } = require('../../utils/context');
 const {
   salesSummaryFlex,
   totalMismatchFlex,
@@ -26,15 +27,11 @@ async function handleTextMessage(event) {
     ? (employee.nickname ? `${employee.name} (${employee.nickname})` : employee.name)
     : 'ไม่ระบุผู้ส่ง';
   const parsed = parseSalesText(text);
+  const context = await resolveBranchFromEvent(event, text);
+  const branch = context.branch || (parsed.branch_code ? await branchRepo.findByCode(parsed.branch_code) : null);
 
-  if (!parsed.branch_code) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบรหัสสาขา กรุณาพิมพ์: ยอดขาย ONM' }] });
-    return;
-  }
-
-  const branch = await branchRepo.findByCode(parsed.branch_code);
   if (!branch) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ไม่พบสาขา: ${parsed.branch_code}` }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์ ยอดขาย CCA' }] });
     return;
   }
 
@@ -56,7 +53,11 @@ async function handleTextMessage(event) {
   setFlowState(lineUserId, {
     status: FLOW_STATES.AWAITING_CONFIRMATION,
     branch_id: branch.id,
-    branch_code: parsed.branch_code,
+    branch_code: branch.code,
+    line_group_id: context.lineGroupId,
+    line_user_id: lineUserId,
+    message_text: text,
+    submitted_at: event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString(),
     images: [],
     imageSummaryShown: false,
     parsed_data: parsed,
@@ -218,6 +219,10 @@ async function handleConfirmation(event) {
         totalSales: flowState.parsed_data.total_sales,
         rawText: flowState.parsed_data.raw_text,
         submittedBy: flowState.employee_id,
+        submittedAt: flowState.submitted_at,
+        source: 'line',
+        lineGroupId: flowState.line_group_id,
+        lineUserId: flowState.line_user_id,
       });
 
       const messageIds = flowState.images.map(img => img.message_id);

@@ -14,13 +14,13 @@ async function findEmployee(event) {
 async function handlePayroll(event) {
   const employee = await findEmployee(event);
   if (!employee) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาผูก LINE ด้วยคำสั่ง: สมัคร <รหัสพนักงาน>' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน>' }] });
     return;
   }
 
   const { data: profile } = await supabase
     .from('employee_pay_profiles')
-    .select('monthly_salary,daily_rate,pay_type,pay_cycle,social_security_amount,special_allowance')
+    .select('*')
     .eq('employee_id', employee.id)
     .eq('is_active', true)
     .order('effective_from', { ascending: false })
@@ -49,7 +49,7 @@ async function handlePayroll(event) {
 async function handleWarning(event) {
   const employee = await findEmployee(event);
   if (!employee) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาผูก LINE ด้วยคำสั่ง: สมัคร <รหัสพนักงาน>' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน>' }] });
     return;
   }
 
@@ -83,7 +83,7 @@ async function handleWarning(event) {
 async function handleAttendanceAlert(event) {
   const employee = await findEmployee(event);
   if (!employee) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาผูก LINE ด้วยคำสั่ง: สมัคร <รหัสพนักงาน>' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน>' }] });
     return;
   }
 

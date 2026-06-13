@@ -15,6 +15,7 @@ process.on('uncaughtException', (err) => {
 });
 
 const srcLineWebhook = require('../src/line/webhook');
+const { runLineJobs } = require('../src/line/services/lineJobs');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -48,9 +49,14 @@ const server = app.listen(port, () => {
   console.log(`✅ Cruzy LINE bot listening on port ${port}`);
 });
 
+const lineJobInterval = setInterval(() => {
+  runLineJobs().catch((err) => console.warn('LINE jobs skipped:', err.message || err));
+}, 60 * 1000);
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
+  clearInterval(lineJobInterval);
   server.close(() => {
     console.log('Server closed');
     process.exit(0);

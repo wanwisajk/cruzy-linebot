@@ -4,7 +4,7 @@ async function createSale(sale) {
   const { data, error } = await supabase
     .from('sales')
     .insert([sale])
-    .select()
+    .select('*')
     .single();
 
   if (error) {

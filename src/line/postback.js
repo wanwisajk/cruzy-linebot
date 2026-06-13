@@ -5,7 +5,11 @@ const { updateSaleStatusWithTimestamp } = require('./flows/sales/service');
 const { replyOrPush } = require('./reply');
 const { logEvent } = require('./utils/audit');
 const { approvedFlex, rejectedFlex } = require('./flex/salesFlex');
+const leaveFlex = require('./flex/leaveFlex');
 const employeeRepo = require('../../backend/repositories/employee.repo');
+const userRepo = require('../../backend/repositories/user.repo');
+const { fetchInspectionById, updateInspectionReview } = require('./flows/inspect/service');
+const { inspectionPendingFlex, inspectionResultFlex } = require('./flex/inspectFlex');
 
 async function fetchSaleById(saleId) {
   const { data, error } = await supabase
@@ -126,29 +130,228 @@ async function resolveApprovalActor(event) {
   return { lineUserId, displayName, confirmedByUsername };
 }
 
+function formatBangkokTime(dateValue) {
+  const date = dateValue ? new Date(dateValue) : new Date();
+  return date.toLocaleTimeString('en-GB', {
+    timeZone: 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+async function resolveReviewActor(event) {
+  const source = event.source || {};
+  const lineUserId = source.userId || null;
+  if (!lineUserId) return { actorType: 'line', actorId: null, name: 'ผู้จัดการ', username: null };
+
+  let name = 'ผู้จัดการ';
+  try {
+    const user = await userRepo.findByLineUserId(lineUserId);
+    if (user) {
+      return {
+        actorType: 'user',
+        actorId: user.id,
+        name: user.name || user.username,
+        username: user.username,
+      };
+    }
+  } catch (err) {
+    console.warn('Unable to fetch reviewing user:', err.message || err);
+  }
+
+  try {
+    const employee = await employeeRepo.findByLineUserId(lineUserId);
+    if (employee) {
+      name = employee.nickname || employee.name;
+      const username = await fetchMatchingUsername(employee);
+      return {
+        actorType: 'employee',
+        actorId: employee.id,
+        name,
+        username,
+      };
+    }
+  } catch (err) {
+    console.warn('Unable to fetch reviewing employee:', err.message || err);
+  }
+
+  try {
+    if (source.groupId) {
+      const profile = await lineClient.getGroupMemberProfile(source.groupId, lineUserId);
+      if (profile && profile.displayName) name = profile.displayName;
+    } else {
+      const profile = await lineClient.getProfile(lineUserId);
+      if (profile && profile.displayName) name = profile.displayName;
+    }
+  } catch (err) {
+    console.warn('Unable to fetch reviewer profile:', err.message || err);
+  }
+
+  return {
+    actorType: 'line',
+    actorId: lineUserId,
+    name,
+    username: null,
+  };
+}
+
 async function handlePostback(event) {
   const data = event.postback && event.postback.data;
   if (!data) return null;
 
   const actor = event.source && event.source.userId ? event.source.userId : null;
 
+  // inspect_action|<inspectionId>|approve or problem
+  if (data.startsWith('inspect_action|')) {
+    const parts = data.split('|');
+    const inspectionId = parts[1];
+    const action = parts[2];
+    const replyTarget = getReplyTarget(event);
+    const inspection = await fetchInspectionById(inspectionId);
+
+    if (!inspection) {
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'ไม่พบรายการตรวจร้านนี้' }] });
+      return true;
+    }
+
+    const branchCode = inspection.branches ? inspection.branches.code : inspection.branch_id;
+    const submitterName = inspection.employees
+      ? (inspection.employees.nickname || inspection.employees.name)
+      : (inspection.line_user_id || 'ไม่ระบุ');
+
+    if (inspection.status === 'pass' || inspection.status === 'issue') {
+      await replyOrPush({
+        ...replyTarget,
+        messages: [inspectionResultFlex({
+          inspectionId,
+          branchCode,
+          status: inspection.status,
+          reviewedBy: inspection.reviewed_by,
+          reviewTime: inspection.review_time,
+          managerNote: inspection.manager_note,
+        })],
+      });
+      return true;
+    }
+
+    if (action !== 'approve' && action !== 'problem') {
+      await replyOrPush({
+        ...replyTarget,
+        messages: [inspectionPendingFlex({
+          inspectionId,
+          branchCode,
+          submitterName,
+          photoCount: inspection.photo_count,
+          workDate: inspection.work_date,
+          submitTime: inspection.submit_time,
+        })],
+      });
+      return true;
+    }
+
+    const reviewer = await resolveReviewActor(event);
+    const status = action === 'approve' ? 'pass' : 'issue';
+    const managerNote = action === 'approve' ? 'อนุมัติการตรวจร้าน' : 'ตรวจร้านมีปัญหา';
+    const reviewTime = formatBangkokTime(event.timestamp);
+    const updated = await updateInspectionReview({
+      inspectionId,
+      status,
+      reviewedBy: reviewer.username || reviewer.name,
+      reviewTime,
+      managerNote,
+      actorType: reviewer.actorType,
+      actorId: reviewer.actorId,
+    });
+
+    await logEvent(action === 'approve' ? 'inspection_approved' : 'inspection_marked_problem', {
+      table_name: 'store_inspections',
+      record_id: inspectionId,
+      branch_id: updated.branch_id,
+      actor,
+      actor_name: reviewer.name,
+      reviewed_by: reviewer.username || reviewer.name,
+      status,
+    });
+
+    const resultFlex = inspectionResultFlex({
+      inspectionId,
+      branchCode,
+      status,
+      reviewedBy: reviewer.name,
+      reviewTime,
+      managerNote,
+    });
+
+    await replyOrPush({ ...replyTarget, messages: [resultFlex] });
+    if (updated.employees && updated.employees.line_user_id) {
+      await replyOrPush({ to: updated.employees.line_user_id, messages: [resultFlex] });
+    }
+    return true;
+  }
+
   // leave_action|<id>|approve
   if (data.startsWith('leave_action|')) {
     const parts = data.split('|');
     const leaveId = parts[1];
     const action = parts[2];
+    const reviewer = await resolveReviewActor(event);
+    const decidedAt = event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString();
 
     if (action === 'approve') {
-      await updateLeaveStatus(leaveId, 'approved', actor);
+      const leave = await updateLeaveStatus(leaveId, 'approved', actor, {
+        decidedBy: reviewer.username || reviewer.name,
+        decidedAt,
+        actorType: reviewer.actorType,
+        actorId: reviewer.actorId,
+        actorName: reviewer.name,
+      });
       await logEvent('leave_approved', { leaveId, actor });
-      await replyOrPush({ to: actor, messages: [{ type: 'text', text: `อนุมัติการลา ID: ${leaveId}` }] });
+      const resultFlex = leaveFlex({
+        id: leave.id,
+        employeeName: leave.employees ? (leave.employees.nickname || leave.employees.name) : '-',
+        branchCode: leave.branches ? leave.branches.code : '-',
+        type: leave.leave_type,
+        from: leave.start_date,
+        to: leave.end_date,
+        daysCount: leave.days_count,
+        reason: leave.reason,
+        status: 'approved',
+        approvedBy: reviewer.name,
+      });
+      if (leave.employees && leave.employees.line_user_id) {
+        await replyOrPush({ to: leave.employees.line_user_id, messages: [resultFlex] });
+      }
+      await replyOrPush({ ...getReplyTarget(event), messages: [resultFlex] });
       return true;
     }
 
     if (action === 'reject') {
-      await updateLeaveStatus(leaveId, 'rejected', actor);
+      const leave = await updateLeaveStatus(leaveId, 'rejected', actor, {
+        decidedBy: reviewer.username || reviewer.name,
+        decidedAt,
+        actorType: reviewer.actorType,
+        actorId: reviewer.actorId,
+        actorName: reviewer.name,
+      });
       await logEvent('leave_rejected', { leaveId, actor });
-      await replyOrPush({ to: actor, messages: [{ type: 'text', text: `ปฏิเสธการลา ID: ${leaveId}` }] });
+      const resultFlex = leaveFlex({
+        id: leave.id,
+        employeeName: leave.employees ? (leave.employees.nickname || leave.employees.name) : '-',
+        branchCode: leave.branches ? leave.branches.code : '-',
+        type: leave.leave_type,
+        from: leave.start_date,
+        to: leave.end_date,
+        daysCount: leave.days_count,
+        reason: leave.reason,
+        status: 'rejected',
+        approvedBy: reviewer.name,
+      });
+      if (leave.employees && leave.employees.line_user_id) {
+        await replyOrPush({ to: leave.employees.line_user_id, messages: [resultFlex] });
+      }
+      await replyOrPush({ ...getReplyTarget(event), messages: [resultFlex] });
       return true;
     }
   }
@@ -216,6 +419,9 @@ async function handlePostback(event) {
     if (action === 'approve') {
       await updateSaleStatusWithTimestamp(saleId, 'approved', {
         confirmedByUsername: actorInfo.confirmedByUsername,
+        actorType: actorInfo.actorType,
+        actorId: actorInfo.actorId,
+        actorName: actorInfo.name,
       });
       await logEvent('sales_approved_by_manager', {
         sale_id: saleId,
@@ -241,6 +447,9 @@ async function handlePostback(event) {
     if (action === 'reject') {
       await updateSaleStatusWithTimestamp(saleId, 'rejected', {
         confirmedByUsername: actorInfo.confirmedByUsername,
+        actorType: actorInfo.actorType,
+        actorId: actorInfo.actorId,
+        actorName: actorInfo.name,
       });
       await logEvent('sales_rejected_by_manager', {
         sale_id: saleId,

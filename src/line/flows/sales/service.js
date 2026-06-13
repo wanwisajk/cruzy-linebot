@@ -2,7 +2,20 @@ const { supabase } = require('../../../../backend/config/supabase');
 const { lineClient, blobClient } = require('../../../../backend/config/line');
 const { logEvent } = require('../../utils/audit');
 
-async function createDraftSale({ branchId, date, cashAmount, creditAmount, transferAmount, totalSales, rawText, submittedBy }) {
+async function createDraftSale({
+  branchId,
+  date,
+  cashAmount,
+  creditAmount,
+  transferAmount,
+  totalSales,
+  rawText,
+  submittedBy,
+  submittedAt,
+  source,
+  lineGroupId,
+  lineUserId,
+}) {
   const payload = {
     sell_date: date || new Date().toISOString().slice(0,10),
     branch_id: branchId || null,
@@ -12,11 +25,14 @@ async function createDraftSale({ branchId, date, cashAmount, creditAmount, trans
     total_amount: totalSales || 0,
     raw_text: rawText || '',
     submitted_by: submittedBy || null,
-    submitted_at: new Date().toISOString(),
+    submitted_at: submittedAt || new Date().toISOString(),
     status: 'draft',
+    source: source || 'line',
+    line_group_id: lineGroupId || null,
+    line_user_id: lineUserId || null,
   };
 
-  const { data, error } = await supabase.from('sales').insert([payload]).select().single();
+  const { data, error } = await supabase.from('sales').insert([payload]).select('*').single();
   if (error) throw error;
 
   await logEvent('sales_draft_created', { sale_id: data.id, actor: submittedBy });
@@ -24,7 +40,7 @@ async function createDraftSale({ branchId, date, cashAmount, creditAmount, trans
 }
 
 async function updateSaleStatus(saleId, status) {
-  const { data, error } = await supabase.from('sales').update({ status }).eq('id', saleId).select().single();
+  const { data, error } = await supabase.from('sales').update({ status }).eq('id', saleId).select('*').single();
   if (error) throw error;
 
   await logEvent('sales_status_updated', { sale_id: saleId, status });
@@ -41,7 +57,11 @@ async function updateSaleStatusWithTimestamp(saleId, status, options = {}) {
     payload.confirmed_by = options.confirmedByUsername;
   }
 
-  const { data, error } = await supabase.from('sales').update(payload).eq('id', saleId).select().single();
+  if (options.actorType) payload.audit_actor_type = options.actorType;
+  if (options.actorId) payload.audit_actor_id = String(options.actorId);
+  if (options.actorName) payload.audit_actor_name = options.actorName;
+
+  const { data, error } = await supabase.from('sales').update(payload).eq('id', saleId).select('*').single();
   if (error) throw error;
 
   await logEvent('sales_status_updated', {
@@ -119,7 +139,7 @@ async function saveAttachments(saleId, messages) {
           file_type: contentType,
           file_size: buffer.byteLength,
         }])
-        .select()
+        .select('*')
         .single();
 
       if (dbError) throw dbError;

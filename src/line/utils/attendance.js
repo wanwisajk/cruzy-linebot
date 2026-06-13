@@ -121,7 +121,7 @@ async function ensureAttendanceAlert({ alertType, employeeId, branchId, workDate
       severity,
       alert_time: alertTime || null,
     }])
-    .select()
+    .select('*')
     .single();
 
   if (error) {

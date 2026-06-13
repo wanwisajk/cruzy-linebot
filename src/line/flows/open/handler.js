@@ -3,7 +3,7 @@ const { recordOpen } = require('./service');
 const openFlex = require('../../flex/openFlex');
 const { replyOrPush } = require('../../reply');
 const employeeRepo = require('../../../../backend/repositories/employee.repo');
-const branchRepo = require('../../../../backend/repositories/branch.repo');
+const { resolveBranchFromEvent } = require('../../utils/context');
 const {
   getBranchScheduleWindow,
   ensureAttendanceAlert,
@@ -20,9 +20,12 @@ async function handle(event) {
   // best-effort: find employee by Line user id
   const employee = lineUserId ? await employeeRepo.findByLineUserId(lineUserId) : null;
   const employeeName = employee ? employee.name : null;
-  const branchMatch = String(parsed.text || '').match(/\b([A-Z]{2,5})\b/i);
-  const branchCode = branchMatch ? branchMatch[1].toUpperCase() : null;
-  const branch = branchCode ? await branchRepo.findByCode(branchCode) : null;
+  const { branch, lineGroupId } = await resolveBranchFromEvent(event, parsed.text);
+
+  if (!branch) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์เช่น เปิดร้าน CCA 09:00' }] });
+    return null;
+  }
 
   const eventTime = event.timestamp ? new Date(event.timestamp) : new Date();
   const workDate = parseDateFromText(parsed.text, eventTime);
@@ -42,6 +45,11 @@ async function handle(event) {
     workDate,
     clockIn,
     lateBy,
+    source: 'line',
+    lineGroupId,
+    lineUserId,
+    messageText: parsed.text,
+    submittedAt: eventTime.toISOString(),
     timestamp: eventTime.toISOString(),
     rawText: parsed.text,
   });
@@ -60,7 +68,7 @@ async function handle(event) {
   }
 
   const flex = openFlex({
-    branch: branch ? branch.code : branchCode,
+    branch: branch.code,
     employee: employeeName,
     time: `${workDate} ${clockIn.slice(0, 5)}`,
     expectedTime: schedule.shiftStart,
