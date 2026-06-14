@@ -13,22 +13,24 @@ const {
   inspectionPendingFlex,
 } = require('../../flex/inspectFlex');
 const { replyOrPush } = require('../../reply');
-const employeeRepo = require('../../../../backend/repositories/employee.repo');
 const userRepo = require('../../../../backend/repositories/user.repo');
+const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const { parseDateFromText, parseTimeFromText } = require('../../utils/attendance');
 const { logEvent } = require('../../utils/audit');
 
 function getStateKey(event) {
-  return event.source && event.source.userId;
+  const source = event.source || {};
+  return source.groupId || source.roomId || source.userId || null;
 }
 
 function getEventDate(event) {
   return event.timestamp ? new Date(event.timestamp) : new Date();
 }
 
-function getSubmitterName(employee, lineUserId) {
-  if (employee) return employee.nickname || employee.name;
+function getSubmitterName(actor, lineUserId) {
+  if (actor && actor.user) return actor.user.name || actor.user.username;
+  if (actor && actor.employee) return actor.employee.nickname || actor.employee.name;
   return lineUserId || 'ไม่ระบุ';
 }
 
@@ -58,28 +60,44 @@ async function startInspection(event) {
     return null;
   }
 
-  const employee = lineUserId ? await employeeRepo.findByLineUserId(lineUserId) : null;
-  if (!employee) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน>' }] });
+  const actor = await resolveLineActor(lineUserId);
+  if (!actor || !actor.type) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน> หรือ แอดมิน <user id>' }] });
     return null;
   }
 
-  const { branch, lineGroupId } = await resolveBranchFromEvent(event, text);
-  if (!branch) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์เช่น ตรวจร้าน CCA' }] });
+  if (!actor.employee) {
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{
+        type: 'text',
+        text: 'ยังไม่พบพนักงานของผู้ตรวจ ระบบต้องใช้ employees.id เพื่อบันทึกลง store_inspections.submitted_by\nกรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน> หรือกำหนด users.scope_type = employee และ users.scope_value = รหัสพนักงาน',
+      }],
+    });
     return null;
   }
 
   const eventTime = getEventDate(event);
   const workDate = parseDateFromText(text, eventTime);
   const submitTime = parseTimeFromText(text, eventTime);
+  const { branch, lineGroupId } = await resolveBranchFromEvent(event, text, {
+    employeeId: actor.employee ? actor.employee.id : null,
+    workDate,
+  });
+  if (!branch) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์เช่น ตรวจร้าน CCA' }] });
+    return null;
+  }
 
   setInspectionState(stateKey, {
     status: INSPECTION_STATUS.COLLECTING_PHOTOS,
     branchId: branch.id,
     branchCode: branch.code,
-    employeeId: employee.id,
-    submitterName: getSubmitterName(employee, lineUserId),
+    employeeId: actor.employee ? actor.employee.id : null,
+    submitterName: getSubmitterName(actor, lineUserId),
+    actorType: actor.user && actor.employeeResolvedBy === 'user_identity' ? 'user' : actor.type,
+    actorId: actor.user && actor.employeeResolvedBy === 'user_identity' ? actor.user.id : actor.id,
+    actorName: actor.user && actor.employeeResolvedBy === 'user_identity' ? actor.user.name : actor.name,
     lineGroupId,
     lineUserId,
     workDate,
@@ -107,7 +125,10 @@ async function handleImageMessage(event) {
   const imageMessages = [...(state.imageMessages || []), messageId];
   updateInspectionState(stateKey, { imageMessages });
 
-  // Deliberately no reply: inspection photos should not flood the group chat.
+  await replyOrPush({
+    replyToken: event.replyToken,
+    messages: [{ type: 'text', text: `รับรูปตรวจร้านแล้ว ${imageMessages.length} รูป\nส่งต่อได้เลย หรือพิมพ์ “ตรวจเสร็จ” เมื่อครบ` }],
+  });
   return true;
 }
 

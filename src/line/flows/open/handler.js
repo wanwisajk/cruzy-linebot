@@ -2,7 +2,7 @@ const { parseOpenEvent } = require('./parser');
 const { recordOpen } = require('./service');
 const openFlex = require('../../flex/openFlex');
 const { replyOrPush } = require('../../reply');
-const employeeRepo = require('../../../../backend/repositories/employee.repo');
+const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const {
   getBranchScheduleWindow,
@@ -17,18 +17,21 @@ async function handle(event) {
   const source = event.source || {};
   const lineUserId = source.userId || null;
 
-  // best-effort: find employee by Line user id
-  const employee = lineUserId ? await employeeRepo.findByLineUserId(lineUserId) : null;
-  const employeeName = employee ? employee.name : null;
-  const { branch, lineGroupId } = await resolveBranchFromEvent(event, parsed.text);
+  const actor = lineUserId ? await resolveLineActor(lineUserId) : null;
+  const employee = actor && actor.employee ? actor.employee : null;
+  const employeeName = actor && actor.name ? actor.name : employee ? (employee.nickname || employee.name) : null;
+  const eventTime = event.timestamp ? new Date(event.timestamp) : new Date();
+  const workDate = parseDateFromText(parsed.text, eventTime);
+  const { branch, lineGroupId } = await resolveBranchFromEvent(event, parsed.text, {
+    employeeId: employee ? employee.id : null,
+    workDate,
+  });
 
   if (!branch) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์เช่น เปิดร้าน CCA 09:00' }] });
     return null;
   }
 
-  const eventTime = event.timestamp ? new Date(event.timestamp) : new Date();
-  const workDate = parseDateFromText(parsed.text, eventTime);
   const clockIn = parseTimeFromText(parsed.text, eventTime);
   const schedule = await getBranchScheduleWindow({
     employeeId: employee ? employee.id : null,

@@ -17,8 +17,17 @@ function isOpenShopCommand(text) {
   return /เปิด\s*ร้าน/i.test(text);
 }
 
+function isPrivateEvent(event) {
+  const source = event.source || {};
+  return !source.groupId && !source.roomId;
+}
+
 function isCloseShopCommand(text) {
   return /ปิด\s*ร้าน/i.test(text) || /ปิด้ราน/i.test(text) || /ปิดราน/i.test(text);
+}
+
+function getScopedStateKeys(source = {}) {
+  return [source.groupId, source.roomId, source.userId].filter(Boolean);
 }
 
 async function handleEvent(event) {
@@ -40,10 +49,10 @@ async function handleEvent(event) {
     if (event.message && (event.message.type === 'image' || event.message.type === 'file')) {
       const source = event.source || {};
       const lineUserId = source.userId || null;
-      if (lineUserId && hasLeaveState(lineUserId)) {
+      if (lineUserId && isPrivateEvent(event) && hasLeaveState(lineUserId)) {
         return leaveHandler.handleAttachmentMessage(event);
       }
-      if (lineUserId && hasInspectionState(lineUserId)) {
+      if (getScopedStateKeys(source).some((key) => hasInspectionState(key))) {
         if (event.message.type !== 'image') return null;
         return inspectHandler.handleImageMessage(event);
       }
@@ -108,6 +117,7 @@ async function handleEvent(event) {
     if (
       event.source &&
       event.source.userId &&
+      isPrivateEvent(event) &&
       hasLeaveState(event.source.userId) &&
       (lower === 'เสร็จ' || lower === 'ข้าม' || lower === 'ยืนยันส่ง' || lower === 'ยกเลิก' || lower.includes('วันที่เริ่มลา'))
     ) {
@@ -157,6 +167,12 @@ if (
     }
 
     if (lower.includes('ขอลา') || lower.includes('ลา')) {
+      if (!isPrivateEvent(event)) {
+        return replyOrPush({
+          replyToken: event.replyToken,
+          messages: [{ type: 'text', text: 'คำสั่งขอลา กรุณาพิมพ์ในแชทส่วนตัวกับบอท'}],
+        });
+      }
       console.log('🏖️ Routing to leave handler');
       return leaveHandler.handle(event);
     }

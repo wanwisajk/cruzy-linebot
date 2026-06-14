@@ -3,10 +3,10 @@ const leaveFlex = require('../../flex/leaveFlex');
 const { replyOrPush } = require('../../reply');
 const { createLeave, uploadLeaveAttachment } = require('./service');
 const { logEvent } = require('../../utils/audit');
-const employeeRepo = require('../../../../backend/repositories/employee.repo');
-const userRepo = require('../../../../backend/repositories/user.repo');
+const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const { parseDateFromText } = require('../../utils/attendance');
+const employeeRepo = require('../../../../backend/repositories/employee.repo');
 const {
   LEAVE_STATUS,
   getLeaveState,
@@ -20,12 +20,53 @@ function getStateKey(event) {
   return event.source && event.source.userId;
 }
 
+function isPrivateEvent(event) {
+  const source = event.source || {};
+  return !!source.userId && !source.groupId && !source.roomId;
+}
+
 function eventIso(event) {
   return event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString();
 }
 
-function employeeName(employee) {
-  return employee ? (employee.nickname || employee.name) : '-';
+function employeeDisplayName(employee) {
+  if (!employee) return '-';
+  return employee.nickname ? `${employee.name} (${employee.nickname})` : employee.name;
+}
+
+function parseTargetEmployeeId(text) {
+  const raw = String(text || '').trim();
+  const match = raw.match(/(?:พนักงาน|employee|emp)\s*#?\s*(\d+)/i) || raw.match(/^(?:ลา|ขอลา)\s+#?\s*(\d+)\b/i);
+  return match ? match[1] : null;
+}
+
+async function resolveLeaveEmployee(actor, text) {
+  const targetEmployeeId = parseTargetEmployeeId(text);
+  if (targetEmployeeId) {
+    const employee = await employeeRepo.findById(targetEmployeeId);
+    return {
+      employee,
+      missingTarget: !employee,
+      targetEmployeeId,
+      requestedByUser: Boolean(actor && actor.user),
+    };
+  }
+
+  if (actor && actor.employee) {
+    return {
+      employee: actor.employee,
+      missingTarget: false,
+      targetEmployeeId: null,
+      requestedByUser: Boolean(actor.user && actor.employeeResolvedBy === 'user_identity'),
+    };
+  }
+
+  return {
+    employee: null,
+    missingTarget: Boolean(actor && actor.user),
+    targetEmployeeId: null,
+    requestedByUser: Boolean(actor && actor.user),
+  };
 }
 
 function daysInclusive(startDate, endDate) {
@@ -93,6 +134,18 @@ async function handle(event) {
   const stateKey = getStateKey(event);
   const state = stateKey ? getLeaveState(stateKey) : null;
 
+  if (!isPrivateEvent(event)) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
+      title: 'คำสั่งขอลาในส่วนตัวเท่านั้น',
+      message: 'ขอลาใช้งานได้เฉพาะแชทส่วนตัวกับบอทเท่านั้น กรุณาพิมพ์ "ขอลา" ในแชทส่วนตัว',
+      buttonLabel: 'ขอลา',
+      buttonText: 'ขอลา',
+      color: '#2563EB',
+      altText: 'ขอลาในแชทส่วนตัวเท่านั้น',
+    })] });
+    return null;
+  }
+
   if (lower === 'ยกเลิก') return cancelLeave(event);
   if (lower === 'เสร็จ' || lower === 'ข้าม') return finishAttachments(event, lower === 'ข้าม');
   if (lower === 'ยืนยันส่ง') return submitLeave(event);
@@ -104,24 +157,65 @@ async function handle(event) {
 }
 
 async function startLeave(event) {
+  const text = event.message && event.message.type === 'text' ? event.message.text.trim() : '';
   const source = event.source || {};
   const lineUserId = source.userId || null;
   const stateKey = getStateKey(event);
   if (!stateKey) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบ LINE user id สำหรับขอลา' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
+      title: 'ไม่พบ LINE user id',
+      message: 'ระบบไม่พบรหัส LINE ของคุณสำหรับการขอลา กรุณาลองใหม่ในแชทนี้หรือรีสตาร์ทบอท',
+      buttonLabel: 'เริ่มใหม่',
+      buttonText: 'ลา',
+      color: '#B91C1C',
+      altText: 'ไม่พบ LINE user id',
+    })] });
     return null;
   }
 
-  const employee = lineUserId ? await employeeRepo.findByLineUserId(lineUserId) : null;
-  if (!employee) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน>' }] });
+  const actor = await resolveLineActor(lineUserId);
+  if (!actor || !actor.type) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
+      title: 'กรุณาผูก LINE',
+      message: 'หากต้องการขอลา กรุณาผูก LINE กับพนักงานด้วยคำสั่ง: พนักงาน <รหัสพนักงาน> หรือใช้บัญชีผู้ใช้งานระบบที่ลงทะเบียนแล้ว',
+      buttonLabel: 'วิธีผูก',
+      buttonText: 'พนักงาน <รหัสพนักงาน>',
+      color: '#EA580C',
+      altText: 'กรุณาผูก LINE',
+    })] });
     return null;
   }
+
+  const { employee, missingTarget, targetEmployeeId, requestedByUser } = await resolveLeaveEmployee(actor, text);
+  if (!employee) {
+    const message = targetEmployeeId
+      ? `ไม่พบพนักงานหมายเลข ${targetEmployeeId} ในระบบ กรุณาตรวจสอบรหัสพนักงานตามข้อมูลในตาราง employees`
+      : 'ยังจับคู่บัญชี LINE นี้กับพนักงานไม่ได้ กรุณาผูก LINE กับพนักงาน หรือกำหนด users.scope_type เป็น employee และ users.scope_value เป็นรหัสพนักงาน';
+
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
+      title: missingTarget ? 'ยังไม่พบพนักงานของบัญชีนี้' : 'บัญชียังไม่ผูกพนักงาน',
+      message,
+      buttonLabel: 'วิธีผูก',
+      buttonText: 'พนักงาน <รหัสพนักงาน>',
+      color: '#B91C1C',
+      altText: 'ยังไม่พบพนักงานของบัญชีนี้',
+    })] });
+    return null;
+  }
+
+  const actingAsUser = requestedByUser && actor.user;
+  const actorType = actingAsUser ? 'user' : actor.type;
+  const actorId = actingAsUser ? actor.user.id : actor.id;
+  const actorName = actingAsUser ? actor.user.name : actor.name;
 
   setLeaveState(stateKey, {
     status: LEAVE_STATUS.AWAITING_TYPE,
     employeeId: employee.id,
-    employeeName: employeeName(employee),
+    employeeName: employeeDisplayName(employee),
+    actorType,
+    actorId,
+    actorName,
+    requestedByUser,
     lineUserId,
     lineGroupId: source.groupId || null,
     attachments: [],
@@ -160,7 +254,14 @@ async function receiveDetails(event) {
 
   const { branch, lineGroupId } = await resolveLeaveBranch(event, text, state.employeeId, parsed.startDate);
   if (!branch) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ยังหาสาขาของคำขอลาไม่ได้ กรุณาพิมพ์สาขาเพิ่มในข้อความ เช่น สาขา: CCA หรือให้มีตารางงาน/สาขา preferred ในระบบ' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
+      title: 'ไม่พบสาขา',
+      message: 'ยังหาสาขาของคำขอลาไม่ได้ กรุณาพิมพ์สาขาเพิ่มในข้อความ เช่น สาขา: CCA หรืออัปเดตตารางงาน/สาขา preferred ในระบบ',
+      buttonLabel: 'ตัวอย่างข้อความ',
+      buttonText: 'วันที่เริ่มลา: 13/06/2026\nวันที่สิ้นสุด: 14/06/2026\nเหตุผล: ...',
+      color: '#EA580C',
+      altText: 'ไม่พบสาขา',
+    })] });
     return null;
   }
 
@@ -190,7 +291,14 @@ async function handleAttachmentMessage(event) {
 
   const isPdf = message.type === 'file' && String(message.fileName || '').toLowerCase().endsWith('.pdf');
   if (message.type === 'file' && !isPdf) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'รองรับเฉพาะรูปภาพหรือไฟล์ PDF สำหรับเอกสารแนบ' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
+      title: 'ไฟล์ไม่ถูกต้อง',
+      message: 'รองรับเฉพาะรูปภาพหรือไฟล์ PDF สำหรับเอกสารแนบ กรุณาแปลงเป็น PDF หรือส่งรูปภาพ',
+      buttonLabel: 'ตัวอย่างไฟล์',
+      buttonText: 'ส่งไฟล์.pdf',
+      color: '#EA580C',
+      altText: 'ไฟล์ไม่รองรับ',
+    })] });
     return true;
   }
 
@@ -210,13 +318,13 @@ async function finishAttachments(event, skipped) {
   const stateKey = getStateKey(event);
   const state = stateKey ? getLeaveState(stateKey) : null;
   if (!state || state.status !== LEAVE_STATUS.AWAITING_ATTACHMENTS) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ยังไม่มีคำขอลาที่รอแนบไฟล์ พิมพ์ “ลา” เพื่อเริ่มใหม่' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.leaveTypeFlex()] });
     return null;
   }
 
   const attachments = state.attachments || [];
   if (!skipped && attachments.length === 0) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ยังไม่มีเอกสารแนบ หากไม่มีให้พิมพ์ “ข้าม”' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.leaveAttachmentPromptFlex({ type: state.leaveType })] });
     return null;
   }
 
@@ -239,7 +347,7 @@ async function submitLeave(event) {
   const stateKey = getStateKey(event);
   const state = stateKey ? getLeaveState(stateKey) : null;
   if (!state || state.status !== LEAVE_STATUS.READY_TO_SUBMIT) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ยังไม่มีสรุปคำขอลาให้ยืนยัน' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.leaveTypeFlex()] });
     return null;
   }
 
@@ -256,6 +364,9 @@ async function submitLeave(event) {
     lineUserId: state.lineUserId,
     messageText: state.messageText,
     submittedAt: eventIso(event),
+    actorType: state.actorType,
+    actorId: state.actorId,
+    actorName: state.actorName,
   });
 
   const uploaded = [];
@@ -267,35 +378,18 @@ async function submitLeave(event) {
     }
   }
 
-  const approveData = `leave_action|${created.id}|approve`;
-  const rejectData = `leave_action|${created.id}|reject`;
-  const approvalFlex = leaveFlex.leaveApprovalFlex({
-    id: created.id,
-    employeeName: state.employeeName,
-    branchCode: state.branchCode,
-    type: state.leaveType,
-    from: state.startDate,
-    to: state.endDate,
-    reason: state.reason,
-    attachmentCount: uploaded.length || (state.attachments || []).length,
-    approveData,
-    rejectData,
-  });
-
-  const targets = new Set();
-  if (state.lineGroupId) targets.add(state.lineGroupId);
-  const managers = await userRepo.findBranchManagers({ id: state.branchId, code: state.branchCode });
-  for (const manager of managers) {
-    if (manager.line_user_id) targets.add(manager.line_user_id);
-  }
-
-  for (const target of targets) {
-    await replyOrPush({ to: target, messages: [approvalFlex] });
-  }
+  // Do not send approval to LINE; wait for web approval instead
 
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [{ type: 'text', text: targets.size > 0 ? 'ส่งคำขอลาเพื่อรออนุมัติแล้ว' : 'บันทึกคำขอลาแล้ว แต่ยังไม่พบกลุ่มหรือ LINE ผู้จัดการสำหรับส่งอนุมัติ' }],
+    messages: [leaveFlex.noticeFlex({
+      title: 'บันทึกคำขอลาแล้ว',
+      message: 'คำขอลาของคุณถูกบันทึกเรียบร้อย รอการอนุมัติจากผู้จัดการบนระบบเว็บ',
+      buttonLabel: 'ตกลง',
+      buttonText: 'ตกลง',
+      color: '#16A34A',
+      altText: 'บันทึกคำขอลาแล้ว',
+    })],
   });
 
   await logEvent('leave_requested_sent', {
@@ -303,7 +397,6 @@ async function submitLeave(event) {
     branch_id: state.branchId,
     actor: state.employeeId,
     attachment_count: uploaded.length || (state.attachments || []).length,
-    target_count: targets.size,
   });
 
   setLeaveState(stateKey, null);
@@ -313,7 +406,14 @@ async function submitLeave(event) {
 async function cancelLeave(event) {
   const stateKey = getStateKey(event);
   if (stateKey) setLeaveState(stateKey, null);
-  await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ยกเลิกคำขอลาแล้ว' }] });
+  await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
+    title: 'ยกเลิกคำขอ',
+    message: 'ยกเลิกคำขอลาแล้ว',
+    buttonLabel: 'เริ่มใหม่',
+    buttonText: 'ลา',
+    color: '#6B7280',
+    altText: 'ยกเลิกคำขอ',
+  })] });
   return true;
 }
 

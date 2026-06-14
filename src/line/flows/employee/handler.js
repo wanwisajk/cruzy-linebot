@@ -1,14 +1,15 @@
 const { supabase } = require('../../../../backend/config/supabase');
-const employeeRepo = require('../../../../backend/repositories/employee.repo');
 const payrollFlex = require('../../flex/payrollFlex');
 const warningFlex = require('../../flex/warningFlex');
 const alertFlex = require('../../flex/alertFlex');
 const { replyOrPush } = require('../../reply');
+const { resolveLineActor } = require('../../utils/actor');
 
 async function findEmployee(event) {
   const lineUserId = event.source && event.source.userId;
   if (!lineUserId) return null;
-  return employeeRepo.findByLineUserId(lineUserId);
+  const actor = await resolveLineActor(lineUserId);
+  return actor && actor.employee ? actor.employee : null;
 }
 
 async function handlePayroll(event) {

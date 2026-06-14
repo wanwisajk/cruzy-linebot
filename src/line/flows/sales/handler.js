@@ -2,14 +2,15 @@ const { parseSalesText } = require('./parser');
 const { getFlowState, setFlowState, updateFlowState, FLOW_STATES } = require('./state');
 const { createDraftSale, saveAttachments } = require('./service');
 const { replyOrPush } = require('../../reply');
-const employeeRepo = require('../../../../backend/repositories/employee.repo');
 const branchRepo = require('../../../../backend/repositories/branch.repo');
+const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const {
   salesSummaryFlex,
   totalMismatchFlex,
   finalReviewFlex,
   managerApprovalFlex,
+  salesNoticeFlex,
 } = require('../../flex/salesFlex');
 
 async function handleTextMessage(event) {
@@ -18,20 +19,56 @@ async function handleTextMessage(event) {
   const lineUserId = source.userId || null;
 
   if (!lineUserId) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่สามารถระบุผู้ส่ง' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
+      title: 'ไม่สามารถระบุผู้ส่ง',
+      subtitle: 'กรุณาลองใหม่อีกครั้ง',
+      message: 'ระบบไม่สามารถอ่านรหัสผู้ใช้จาก LINE event ได้ หากคุณใช้งานในห้องแชทนี้ โปรดรีสตาร์ทคำสั่งใหม่อีกครั้ง',
+      buttonLabel: 'เริ่มใหม่',
+      buttonText: 'ยอดขาย',
+      color: '#B91C1C',
+      altText: 'ไม่สามารถระบุผู้ส่ง',
+    })] });
     return;
   }
 
-  const employee = await employeeRepo.findByLineUserId(lineUserId);
-  const submitterName = employee
-    ? (employee.nickname ? `${employee.name} (${employee.nickname})` : employee.name)
-    : 'ไม่ระบุผู้ส่ง';
+  const actor = await resolveLineActor(lineUserId);
+  const employee = actor && actor.employee ? actor.employee : null;
+  const user = actor && actor.user ? actor.user : null;
+
+  if (!employee) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
+      title: 'ยังไม่พบพนักงานของผู้ส่ง',
+      subtitle: 'ต้องเชื่อมกับ employees ก่อนบันทึกยอดขาย',
+      message: 'ระบบต้องใช้ employees.id เพื่อบันทึกลง sales.submitted_by กรุณาผูก LINE ด้วยคำสั่ง พนักงาน <รหัสพนักงาน> หรือกำหนด users.scope_type = employee และ users.scope_value = รหัสพนักงาน',
+      buttonLabel: 'วิธีผูก',
+      buttonText: 'พนักงาน <รหัสพนักงาน>',
+      color: '#B91C1C',
+      altText: 'ยังไม่พบพนักงานของผู้ส่ง',
+    })] });
+    return;
+  }
+
+  const submitterName = actor && actor.name
+    ? actor.name
+    : employee
+      ? (employee.nickname ? `${employee.name} (${employee.nickname})` : employee.name)
+      : 'ไม่ระบุผู้ส่ง';
+  const submitterIdentity = actor ? actor.type : null;
+  const submitterId = actor ? actor.id : null;
   const parsed = parseSalesText(text);
-  const context = await resolveBranchFromEvent(event, text);
+  const context = await resolveBranchFromEvent(event, text, { employeeId: employee ? employee.id : null });
   const branch = context.branch || (parsed.branch_code ? await branchRepo.findByCode(parsed.branch_code) : null);
 
   if (!branch) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์ ยอดขาย CCA' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
+      title: 'ไม่พบสาขา',
+      subtitle: 'กรุณากำหนดสาขากลุ่มก่อน',
+      message: 'สาขายังไม่ถูกผูกกับกลุ่มนี้ โปรดใช้คำสั่ง: สาขา <id> หรือพิมพ์ ยอดขาย CCA',
+      buttonLabel: 'สาขา CCA',
+      buttonText: 'สาขา CCA',
+      color: '#EA580C',
+      altText: 'ไม่พบสาขา',
+    })] });
     return;
   }
 
@@ -62,6 +99,8 @@ async function handleTextMessage(event) {
     imageSummaryShown: false,
     parsed_data: parsed,
     employee_id: employee ? employee.id : null,
+    submitter_id: submitterId,
+    submitter_identity: submitterIdentity,
     submitter_name: submitterName,
     replyToken: event.replyToken,
   });
@@ -134,13 +173,29 @@ async function handleUploadPrompt(event) {
   const lineUserId = source.userId || null;
 
   if (!lineUserId) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่สามารถระบุผู้ส่ง' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
+      title: 'ไม่สามารถระบุผู้ส่ง',
+      subtitle: 'กรุณาลองใหม่อีกครั้ง',
+      message: 'ระบบไม่สามารถอ่านรหัสผู้ใช้จาก LINE event ได้ ถ้าคุณใช้งานในห้องแชทนี้ โปรดพิมพ์คำสั่งยอดขายอีกครั้ง',
+      buttonLabel: 'กลับไปที่หน้าหลัก',
+      buttonText: 'ยอดขาย',
+      color: '#B91C1C',
+      altText: 'ไม่สามารถระบุผู้ส่ง',
+    })] });
     return;
   }
 
   const flowState = getFlowState(lineUserId);
   if (!flowState) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาพิมพ์รายงานยอดขายใหม่ก่อนส่งรูปภาพ' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
+      title: 'ต้องเริ่มรายงานยอดขายก่อน',
+      subtitle: 'ยังไม่มีรายการในระบบ',
+      message: 'กรุณาพิมพ์ยอดขายใหม่ก่อนส่งรูปหลักฐาน แล้วระบบจะรอรับรูปให้ครบ 3 รูปและสรุปยอดให้อัตโนมัติ',
+      buttonLabel: 'เริ่มรายงานยอดขาย',
+      buttonText: 'ยอดขาย',
+      color: '#2563EB',
+      altText: 'เริ่มรายงานยอดขาย',
+    })] });
     return;
   }
 
@@ -184,13 +239,29 @@ async function handleConfirmation(event) {
   const lineUserId = source.userId || null;
 
   if (!lineUserId) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่สามารถระบุผู้ส่ง' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
+      title: 'ไม่สามารถระบุผู้ส่ง',
+      subtitle: 'กรุณาลองใหม่อีกครั้ง',
+      message: 'ระบบไม่สามารถอ่านรหัสผู้ใช้จาก LINE event ได้ หากคุณใช้งานในห้องแชทนี้ โปรดพิมพ์คำสั่งยอดขายใหม่อีกครั้ง',
+      buttonLabel: 'เริ่มใหม่',
+      buttonText: 'ยอดขาย',
+      color: '#B91C1C',
+      altText: 'ไม่สามารถระบุผู้ส่ง',
+    })] });
     return;
   }
 
   const flowState = getFlowState(lineUserId);
   if (!flowState) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบยอดขายที่รอการยืนยัน' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
+      title: 'ไม่พบรายการ',
+      subtitle: 'ไม่มียอดขายที่รอยืนยัน',
+      message: 'หากคุณเพิ่งเริ่มใช้งาน กรุณาพิมพ์ยอดขายใหม่ก่อน แล้วระบบจะรอรับรูปตรวจสอบ',
+      buttonLabel: 'เริ่มรายงานยอดขาย',
+      buttonText: 'ยอดขาย',
+      color: '#2563EB',
+      altText: 'ไม่พบรายการยอดขาย',
+    })] });
     return;
   }
 
@@ -223,6 +294,8 @@ async function handleConfirmation(event) {
         source: 'line',
         lineGroupId: flowState.line_group_id,
         lineUserId: flowState.line_user_id,
+        submitterIdentity: flowState.submitter_identity,
+        submitterId: flowState.submitter_id,
       });
 
       const messageIds = flowState.images.map(img => img.message_id);
@@ -264,50 +337,77 @@ async function handleConfirmation(event) {
   if (confirmMatch && branchCodeFromText && branchCodeFromText !== flowState.branch_code) {
     await replyOrPush({
       replyToken: event.replyToken,
-      messages: [{ type: 'text', text: `รหัสสาขาไม่ตรงกัน กรุณาพิมพ์: ส่งรูป ${flowState.branch_code}` }],
-    });
+      messages: [salesNoticeFlex({
+        title: 'รหัสสาขาไม่ตรงกัน',
+        subtitle: `สาขาที่ต้องการคือ ${flowState.branch_code}`,
+        message: 'โปรดพิมพ์คำสั่งใหม่ด้วยรหัสสาขาที่ถูกต้องหรือกดปุ่มส่งรูปหลักฐานอีกครั้ง',
+        buttonLabel: `ส่งรูป ${flowState.branch_code}`,
+        buttonText: `ส่งรูป ${flowState.branch_code}`,
+        color: '#EA580C',
+        altText: 'รหัสสาขาไม่ตรงกัน',
+      })] });
     return;
   }
 
+
   if (flowState.status === FLOW_STATES.AWAITING_CONFIRMATION) {
     if (!confirmMatch) {
-      await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณากดปุ่มหรือพิมพ์: ส่งรูปหลักฐาน' }] });
+      await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
+        title: 'รอยืนยันรูปหลักฐาน',
+        subtitle: 'กดปุ่มหรือพิมพ์เพื่อส่งรูป',
+        message: 'เพื่อดำเนินการต่อ กรุณากดปุ่ม ส่งรูปหลักฐาน หรือพิมพ์คำสั่ง ส่งรูปหลักฐาน',
+        buttonLabel: 'ส่งรูปหลักฐาน',
+        buttonText: 'ส่งรูปหลักฐาน',
+        color: '#2563EB',
+        altText: 'รอบันทึกรูปหลักฐาน',
+      })] });
       return;
     }
 
     await updateFlowState(lineUserId, { status: FLOW_STATES.AWAITING_IMAGES });
     await replyOrPush({
       replyToken: event.replyToken,
-      messages: [
-        {
-          type: 'text',
-          text: 'ส่งรูปหลักฐาน 3 รูปได้เลยครับ ระบบจะเงียบไว้ก่อน แล้วสรุปทั้งหมดให้อัตโนมัติเมื่อครบ 3 รูป',
-          quickReply: {
-            items: [
-              {
-                type: 'action',
-                action: {
-                  type: 'cameraRoll',
-                  label: '📸 เลือกรูป'
-                }
-              },
-              {
-                type: 'action',
-                action: {
-                  type: 'camera',
-                  label: '📷 ถ่ายรูป'
-                }
+      messages: [salesNoticeFlex({
+        title: 'พร้อมรับรูปหลักฐาน',
+        subtitle: 'ส่งได้สูงสุด 3 รูป',
+        message: 'กรุณาส่งรูปหลักฐาน 3 รูป ระบบจะสรุปยอดให้เมื่อรับครบ',
+        buttonLabel: 'ส่งรูปหลักฐาน',
+        buttonText: 'ส่งรูปหลักฐาน',
+        color: '#2563EB',
+        altText: 'พร้อมรับรูปหลักฐาน',
+        quickReply: {
+          items: [
+            {
+              type: 'action',
+              action: {
+                type: 'cameraRoll',
+                label: '📸 เลือกรูป'
               }
-            ]
-          }
+            },
+            {
+              type: 'action',
+              action: {
+                type: 'camera',
+                label: '📷 ถ่ายรูป'
+              }
+            }
+          ]
         }
-      ],
+      })]
     });
     return;
   }
 
   if (flowState.status !== FLOW_STATES.AWAITING_IMAGES) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบยอดขายที่รอการยืนยัน หรือท่านยังไม่ได้ส่งรูปภาพหลักฐาน' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
+      title: 'ไม่มีรายการรอการยืนยัน',
+      subtitle: 'คุณยังไม่ได้ส่งรูปครบถ้วน',
+      message: 'กรุณาส่งรูปหลักฐานอย่างน้อย 3 รูป เพื่อให้ระบบสรุปและยืนยันยอดขายให้เสร็จสมบูรณ์',
+      buttonLabel: 'ส่งรูปหลักฐาน',
+      buttonText: 'ส่งรูปหลักฐาน',
+      color: '#2563EB',
+      altText: 'ไม่มีรายการรอการยืนยัน',
+    })] });
     return;
   }
 
@@ -315,11 +415,15 @@ async function handleConfirmation(event) {
   if (imageCount < 3) {
     await replyOrPush({
       replyToken: event.replyToken,
-      messages: [{
-        type: 'text',
-        text: `ได้รับรูปแล้ว ${imageCount} รูป กรุณาส่งเพิ่มให้ครบ 3 รูป แล้วระบบจะสรุปให้อัตโนมัติ`
-      }]
-    });
+      messages: [salesNoticeFlex({
+        title: `ได้รับรูป ${imageCount} รูป`,
+        subtitle: 'ยังไม่ครบ 3 รูป',
+        message: 'กรุณาส่งรูปหลักฐานเพิ่มให้ครบ 3 รูป แล้วระบบจะสรุปยอดให้อัตโนมัติ',
+        buttonLabel: 'ส่งเพิ่ม',
+        buttonText: 'ส่งรูปหลักฐาน',
+        color: '#2563EB',
+        altText: 'รอยอดรูปหลักฐาน',
+      })] });
     return;
   }
 

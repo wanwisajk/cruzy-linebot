@@ -1,3 +1,5 @@
+const { COLORS, row: uiRow, resultFlex } = require('./uiFlex');
+
 function row(label, value, color = '#111827') {
   return {
     type: 'box',
@@ -202,32 +204,26 @@ function leaveApprovalFlex({ id, employeeName, branchCode, type, from, to, reaso
   });
 }
 
-function leaveResultFlex({ id, employeeName, type, from, to, status, approvedBy }) {
+function leaveResultFlex({ id, employeeName, type, from, to, status, approvedBy, managerNote }) {
   const approved = status === 'approved';
-  return bubble({
+  const rows = [
+    uiRow('ผู้ขอ', employeeName || '-'),
+    uiRow('ประเภท', type || '-'),
+    uiRow('วันที่', `${from || '-'} - ${to || '-'}`),
+    uiRow('ผู้อนุมัติ', approvedBy || 'ผู้จัดการ'),
+  ];
+
+  if (!approved && managerNote) {
+    rows.push(uiRow('เหตุผล', managerNote));
+  }
+
+  return resultFlex({
     title: approved ? 'อนุมัติวันลาเรียบร้อย' : 'ไม่อนุมัติวันลา',
     subtitle: `คำขอลา #${id}`,
-    color: approved ? '#16A34A' : '#B91C1C',
+    statusLabel: approved ? 'อนุมัติ' : 'ไม่อนุมัติ',
+    statusColor: approved ? COLORS.success : COLORS.danger,
     altText: approved ? 'อนุมัติวันลาเรียบร้อย' : 'ไม่อนุมัติวันลา',
-    body: [
-      {
-        type: 'box',
-        layout: 'vertical',
-        backgroundColor: '#FFFFFF',
-        borderColor: '#E2E8F0',
-        borderWidth: '1px',
-        cornerRadius: 'md',
-        paddingAll: 'md',
-        spacing: 'sm',
-        contents: [
-          row('ผู้ขอ', employeeName || '-'),
-          row('ประเภท', type || '-'),
-          row('วันที่', `${from || '-'} - ${to || '-'}`),
-          row('สถานะ', approved ? 'อนุมัติ' : 'ไม่อนุมัติ', approved ? '#16A34A' : '#B91C1C'),
-          row('ผู้อนุมัติ', approvedBy || 'ผู้จัดการ'),
-        ],
-      },
-    ],
+    rows,
   });
 }
 
@@ -258,6 +254,45 @@ function legacyLeaveFlex(args) {
   });
 }
 
+function noticeFlex({ title, subtitle, message, buttonLabel, buttonText, color = '#0F172A', altText, quickReply }) {
+  const messageBubble = bubble({
+    title: title || 'แจ้งเตือน',
+    subtitle: subtitle || '',
+    color,
+    body: [
+      {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#FFFFFF',
+        borderColor: '#E2E8F0',
+        borderWidth: '1px',
+        cornerRadius: 'md',
+        paddingAll: 'md',
+        contents: [
+          { type: 'text', text: message || '-', color: '#111827', size: 'sm', wrap: true },
+        ],
+      },
+    ],
+    footer: buttonLabel ? {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'sm',
+      contents: [
+        {
+          type: 'button',
+          style: 'primary',
+          action: { type: 'message', label: buttonLabel, text: buttonText || buttonLabel },
+        },
+      ],
+    } : undefined,
+    altText: altText || title || 'แจ้งเตือน',
+  });
+
+  if (quickReply) messageBubble.quickReply = quickReply;
+
+  return messageBubble;
+}
+
 module.exports = legacyLeaveFlex;
 module.exports.leaveTypeFlex = leaveTypeFlex;
 module.exports.leaveDetailPromptFlex = leaveDetailPromptFlex;
@@ -265,3 +300,4 @@ module.exports.leaveAttachmentPromptFlex = leaveAttachmentPromptFlex;
 module.exports.leaveSummaryFlex = leaveSummaryFlex;
 module.exports.leaveApprovalFlex = leaveApprovalFlex;
 module.exports.leaveResultFlex = leaveResultFlex;
+module.exports.noticeFlex = noticeFlex;

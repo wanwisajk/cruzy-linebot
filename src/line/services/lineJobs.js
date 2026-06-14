@@ -3,6 +3,7 @@ const { lineClient } = require('../../../backend/config/line');
 const warningFlex = require('../flex/warningFlex');
 const payrollFlex = require('../flex/payrollFlex');
 const alertFlex = require('../flex/alertFlex');
+const leaveFlex = require('../flex/leaveFlex');
 
 let running = false;
 
@@ -171,10 +172,54 @@ async function sendMonthEndPayroll(date = new Date()) {
   }
 }
 
+async function sendLeaveResults() {
+  const { data, error } = await supabase
+    .from('leaves')
+    .select('id,leave_type,start_date,end_date,status,manager_note,line_user_id,decided_by,employees(name,nickname,line_user_id)')
+    .in('status', ['approved', 'rejected'])
+    .is('line_notified', false)
+    .order('updated_at', { ascending: true });
+
+  if (error) {
+    console.warn('Leave notification job query failed:', error.message || error);
+    return;
+  }
+
+  for (const leave of data || []) {
+    const lineUserId = (leave.employees && leave.employees.line_user_id) || leave.line_user_id;
+    if (!lineUserId) {
+      console.warn('Skip leave notification: missing line_user_id', { leave_id: leave.id });
+      continue;
+    }
+
+    const resultFlex = leaveFlex.leaveResultFlex({
+      id: leave.id,
+      employeeName: leave.employees ? (leave.employees.nickname || leave.employees.name) : '-',
+      type: leave.leave_type,
+      from: leave.start_date,
+      to: leave.end_date,
+      status: leave.status,
+      approvedBy: leave.decided_by || 'ผู้จัดการ',
+      managerNote: leave.manager_note,
+    });
+
+    try {
+      await push(lineUserId, resultFlex);
+      await supabase
+        .from('leaves')
+        .update({ line_notified: true })
+        .eq('id', leave.id);
+    } catch (sendError) {
+      console.warn('Leave result LINE push failed:', sendError.message || sendError, { leave_id: leave.id, lineUserId });
+    }
+  }
+}
+
 async function runLineJobs(date = new Date()) {
   if (running) return;
   running = true;
   try {
+    await sendLeaveResults();
     await sendTodayWarningLetters(date);
     await sendTodayAttendanceAlerts(date);
     await sendMonthEndPayroll(date);

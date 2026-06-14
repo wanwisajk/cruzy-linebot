@@ -4,7 +4,7 @@ const { parseDepositText } = require('./parser');
 const { recordDeposit, uploadSlipImage } = require('./service');
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./state');
 const { logEvent } = require('../../utils/audit');
-const employeeRepo = require('../../../../backend/repositories/employee.repo');
+const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 
 async function handle(event) {
@@ -18,7 +18,18 @@ async function handle(event) {
     return;
   }
 
-  const employee = await employeeRepo.findByLineUserId(actor);
+  const actorInfo = await resolveLineActor(actor);
+  if (!actorInfo || !actorInfo.employee) {
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{
+        type: 'text',
+        text: 'ยังไม่พบพนักงานของผู้ฝาก ระบบต้องใช้ employees.id เพื่อบันทึกลง cash_deposits.deposited_by\nกรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน> หรือกำหนด users.scope_type = employee และ users.scope_value = รหัสพนักงาน',
+      }],
+    });
+    return;
+  }
+
   const pending = getDepositState(actor);
   if (pending && pending.status === DEPOSIT_STATUS.AWAITING_SLIP) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'รอรูปสลิปจากยอดฝากก่อนหน้าก่อนครับ ส่งรูปสลิป 1 รูปได้เลย' }] });
@@ -31,7 +42,10 @@ async function handle(event) {
     return;
   }
 
-  const { branch, lineGroupId } = await resolveBranchFromEvent(event, text);
+  const { branch, lineGroupId } = await resolveBranchFromEvent(event, text, {
+    employeeId: actorInfo && actorInfo.employee ? actorInfo.employee.id : null,
+    workDate: parsed.depositDate,
+  });
   if (!branch) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์เช่น ฝาก CCA 1,500' }] });
     return;
@@ -50,9 +64,11 @@ async function handle(event) {
     messageText: text,
     submittedAt: eventDate.toISOString(),
     diff: parsed.diff,
-    actor,
-    employeeId: employee ? employee.id : null,
-    employeeName: employee ? (employee.nickname ? `${employee.name} (${employee.nickname})` : employee.name) : 'ไม่ระบุผู้ฝาก',
+    actorType: actorInfo.type,
+    actorId: actorInfo.id,
+    actorName: actorInfo.name || 'ไม่ระบุผู้ฝาก',
+    employeeId: actorInfo.employee ? actorInfo.employee.id : null,
+    employeeName: actorInfo.name || 'ไม่ระบุผู้ฝาก',
     replyToken: event.replyToken,
   });
 
@@ -117,7 +133,11 @@ async function handleImageMessage(event) {
     submitted_at: state.submittedAt,
   });
 
-  await logEvent('deposit_recorded', { deposit: created, actor });
+  await logEvent('deposit_recorded', {
+    deposit: created,
+    actorType: state.actorType || (state.employeeId ? 'employee' : 'line'),
+    actorId: state.actorId || state.employeeId || null,
+  });
   setDepositState(actor, null);
 
   const flex = depositFlex({

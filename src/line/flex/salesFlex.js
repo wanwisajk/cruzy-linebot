@@ -1,3 +1,5 @@
+const { COLORS, row: uiRow, resultFlex } = require('./uiFlex');
+
 function salesAmountRow(label, amount, color = '#111827') {
   return {
     type: 'box',
@@ -449,227 +451,110 @@ function successFlex({ branchCode, cash, credit, transfer, total, saleId, imageC
 }
 
 function approvedFlex({ saleId, branchCode, total, approvedBy, approvedAt }) {
-  return {
-    type: 'flex',
+  return resultFlex({
+    title: 'อนุมัติยอดขายแล้ว',
+    subtitle: `รายการ #${saleId}`,
+    statusLabel: 'อนุมัติแล้ว',
+    statusColor: COLORS.success,
     altText: 'อนุมัติยอดขายแล้ว',
-    contents: {
-      type: 'bubble',
-      header: {
-        type: 'box',
-        layout: 'vertical',
-        backgroundColor: '#0F766E',
-        paddingAll: 'lg',
-        contents: [
-          {
-            type: 'text',
-            text: '✅ อนุมัติยอดขายแล้ว',
-            weight: 'bold',
-            color: '#FFFFFF',
-            size: 'lg',
-            align: 'center'
-          },
-          {
-            type: 'text',
-            text: 'รายการนี้ได้รับการอนุมัติเรียบร้อยแล้ว',
-            size: 'xs',
-            color: '#CCFBF1',
-            align: 'center',
-            wrap: true,
-            margin: 'md'
-          }
-        ]
-      },
-      body: {
-        type: 'box',
-        layout: 'vertical',
-        spacing: 'md',
-        contents: [
-          {
-            type: 'box',
-            layout: 'vertical',
-            cornerRadius: 'md',
-            borderWidth: '1px',
-            borderColor: '#D1FAE5',
-            paddingAll: 'lg',
-            backgroundColor: '#ECFDF5',
-            contents: [
-              {
-                type: 'text',
-                text: 'ข้อมูลยอดขาย',
-                weight: 'bold',
-                color: '#065F46',
-                size: 'md'
-              },
-              {
-                type: 'separator',
-                margin: 'md'
-              },
-              {
-                type: 'box',
-                layout: 'vertical',
-                spacing: 'sm',
-                contents: [
-                  {
-                    type: 'box',
-                    layout: 'horizontal',
-                    contents: [
-                      { type: 'text', text: '🆔 Sale ID', color: '#065F46', size: 'sm' },
-                      { type: 'text', text: String(saleId), align: 'end', weight: 'bold', color: '#134E4A', size: 'sm' }
-                    ]
-                  },
-                  {
-                    type: 'box',
-                    layout: 'horizontal',
-                    contents: [
-                      { type: 'text', text: '🏢 สาขา', color: '#065F46', size: 'sm' },
-                      { type: 'text', text: String(branchCode || 'ไม่ระบุสาขา'), align: 'end', weight: 'bold', color: '#134E4A', size: 'sm' }
-                    ]
-                  },
-                  {
-                    type: 'box',
-                    layout: 'horizontal',
-                    contents: [
-                      { type: 'text', text: '💰 ยอดรวม', color: '#065F46', size: 'sm' },
-                      { type: 'text', text: `${Number(total||0).toLocaleString()} บาท`, align: 'end', weight: 'bold', color: '#134E4A', size: 'sm' }
-                    ]
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            type: 'box',
-            layout: 'vertical',
-            cornerRadius: 'md',
-            borderWidth: '1px',
-            borderColor: '#D1FAE5',
-            paddingAll: 'lg',
-            backgroundColor: '#F0FDF4',
-            contents: [
-              {
-                type: 'text',
-                text: 'รายละเอียดการอนุมัติ',
-                weight: 'bold',
-                color: '#065F46',
-                size: 'md'
-              },
-              {
-                type: 'separator',
-                margin: 'md'
-              },
-              {
-                type: 'box',
-                layout: 'vertical',
-                spacing: 'sm',
-                contents: [
-                  {
-                    type: 'box',
-                    layout: 'horizontal',
-                    contents: [
-                      { type: 'text', text: '👤 อนุมัติโดย', color: '#065F46', size: 'sm' },
-                      { type: 'text', text: String(approvedBy || 'ผู้จัดการ'), align: 'end', weight: 'bold', color: '#134E4A', size: 'sm' }
-                    ]
-                  },
-                  {
-                    type: 'box',
-                    layout: 'horizontal',
-                    contents: [
-                      { type: 'text', text: '📅 วันที่อนุมัติ', color: '#065F46', size: 'sm' },
-                      { type: 'text', text: String(approvedAt || 'ไม่ระบุเวลา'), align: 'end', weight: 'bold', color: '#134E4A', size: 'sm' }
-                    ]
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            type: 'box',
-            layout: 'horizontal',
-            contents: [
-              {
-                type: 'text',
-                text: 'สถานะ',
-                color: '#6B7280',
-                size: 'xs'
-              },
-              {
-                type: 'text',
-                text: 'ยืนยันแล้ว',
-                align: 'end',
-                weight: 'bold',
-                color: '#16A34A',
-                size: 'xs'
-              }
-            ]
-          }
-        ]
-      }
-    }
-  };
+    rows: [
+      uiRow('Sale ID', saleId),
+      uiRow('สาขา', branchCode || 'ไม่ระบุสาขา'),
+      uiRow('ยอดรวม', `${Number(total || 0).toLocaleString()} บาท`, COLORS.success),
+      uiRow('อนุมัติโดย', approvedBy || 'ผู้จัดการ'),
+      uiRow('เวลาอนุมัติ', approvedAt || 'ไม่ระบุเวลา'),
+    ],
+  });
 }
 
-function rejectedFlex({ saleId, branchCode, rejectedBy, rejectedAt }) {
-  return {
+function salesNoticeFlex({
+  title,
+  subtitle,
+  message,
+  buttonLabel,
+  buttonText,
+  color = '#0F172A',
+  altText,
+  quickReply,
+}) {
+  const bubble = {
     type: 'flex',
-    altText: 'ตีกลับยอดขายแล้ว',
+    altText: altText || title || 'Sales notification',
     contents: {
       type: 'bubble',
       header: {
         type: 'box',
         layout: 'vertical',
-        backgroundColor: '#DC2626',
+        backgroundColor: color,
+        paddingAll: 'lg',
         contents: [
-          {
-            type: 'text',
-            text: '❌ ตีกลับยอดขายแล้ว',
-            weight: 'bold',
-            color: '#FFFFFF',
-            size: 'lg',
-            align: 'center'
-          }
-        ]
+          { type: 'text', text: title || 'แจ้งเตือนยอดขาย', color: '#FFFFFF', weight: 'bold', size: 'lg', wrap: true },
+          subtitle ? { type: 'text', text: subtitle, color: '#DBEAFE', size: 'xs', margin: 'xs', wrap: true } : null,
+        ].filter(Boolean),
       },
       body: {
         type: 'box',
         layout: 'vertical',
         spacing: 'sm',
+        backgroundColor: '#F8FAFC',
         contents: [
           {
             type: 'box',
-            layout: 'horizontal',
+            layout: 'vertical',
+            backgroundColor: '#FFFFFF',
+            borderColor: '#E2E8F0',
+            borderWidth: '1px',
+            cornerRadius: 'md',
+            paddingAll: 'md',
             contents: [
-              { type: 'text', text: '🆔 Sale ID', color: '#666666', size: 'sm' },
-              { type: 'text', text: String(saleId), align: 'end', weight: 'bold', color: '#111111', size: 'sm' }
-            ]
+              { type: 'text', text: message || '-', color: '#334155', size: 'sm', wrap: true },
+            ],
           },
-          {
-            type: 'box',
-            layout: 'horizontal',
-            contents: [
-              { type: 'text', text: '🏢 สาขา', color: '#666666', size: 'sm' },
-              { type: 'text', text: String(branchCode || 'ไม่ระบุสาขา'), align: 'end', weight: 'bold', color: '#111111', size: 'sm' }
-            ]
-          },
-          {
-            type: 'box',
-            layout: 'horizontal',
-            contents: [
-              { type: 'text', text: '👤 ตีกลับโดย', color: '#666666', size: 'sm' },
-              { type: 'text', text: String(rejectedBy || 'ผู้จัดการ'), align: 'end', weight: 'bold', color: '#111111', size: 'sm' }
-            ]
-          },
-          {
-            type: 'box',
-            layout: 'horizontal',
-            contents: [
-              { type: 'text', text: '📅 เวลาที่ตีกลับ', color: '#666666', size: 'sm' },
-              { type: 'text', text: String(rejectedAt || 'ไม่ระบุเวลา'), align: 'end', weight: 'bold', color: '#111111', size: 'sm' }
-            ]
-          }
-        ]
-      }
-    }
+        ],
+      },
+    },
   };
+
+  if (buttonLabel) {
+    bubble.contents.footer = {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'sm',
+      contents: [
+        {
+          type: 'button',
+          style: 'primary',
+          action: {
+            type: 'message',
+            label: buttonLabel,
+            text: buttonText || buttonLabel,
+          },
+        },
+      ],
+    };
+  }
+
+  if (quickReply) {
+    bubble.quickReply = quickReply;
+  }
+
+  return bubble;
+}
+
+function rejectedFlex({ saleId, branchCode, rejectedBy, rejectedAt }) {
+  return resultFlex({
+    title: 'ตีกลับยอดขายแล้ว',
+    subtitle: `รายการ #${saleId}`,
+    statusLabel: 'ตีกลับ',
+    statusColor: COLORS.danger,
+    altText: 'ตีกลับยอดขายแล้ว',
+    rows: [
+      uiRow('Sale ID', saleId),
+      uiRow('สาขา', branchCode || 'ไม่ระบุสาขา'),
+      uiRow('ตีกลับโดย', rejectedBy || 'ผู้จัดการ'),
+      uiRow('เวลาที่ตีกลับ', rejectedAt || 'ไม่ระบุเวลา'),
+    ],
+  });
 }
 
 module.exports = {
@@ -679,5 +564,6 @@ module.exports = {
   finalReviewFlex,
   managerApprovalFlex,
   approvedFlex,
+  salesNoticeFlex,
   rejectedFlex,
 };

@@ -6,8 +6,7 @@ const { replyOrPush } = require('./reply');
 const { logEvent } = require('./utils/audit');
 const { approvedFlex, rejectedFlex } = require('./flex/salesFlex');
 const leaveFlex = require('./flex/leaveFlex');
-const employeeRepo = require('../../backend/repositories/employee.repo');
-const userRepo = require('../../backend/repositories/user.repo');
+const { resolveLineActor } = require('./utils/actor');
 const { fetchInspectionById, updateInspectionReview } = require('./flows/inspect/service');
 const { inspectionPendingFlex, inspectionResultFlex } = require('./flex/inspectFlex');
 
@@ -96,6 +95,7 @@ async function resolveApprovalActor(event) {
   const source = event.source || {};
   const lineUserId = source.userId || null;
   let displayName = 'ผู้จัดการ';
+  let actor = null;
   let employee = null;
 
   if (!lineUserId) {
@@ -118,16 +118,24 @@ async function resolveApprovalActor(event) {
   }
 
   try {
-    employee = await employeeRepo.findByLineUserId(lineUserId);
-    if (displayName === 'ผู้จัดการ' && employee && (employee.nickname || employee.name)) {
-      displayName = employee.nickname || employee.name;
+    actor = await resolveLineActor(lineUserId);
+    employee = actor && actor.employee ? actor.employee : null;
+    if (displayName === 'ผู้จัดการ' && actor && actor.name) {
+      displayName = actor.name;
     }
-  } catch (employeeError) {
-    console.warn('Unable to fetch employee for approval actor:', lineUserId, employeeError.message || employeeError);
+  } catch (actorError) {
+    console.warn('Unable to resolve approval actor:', lineUserId, actorError.message || actorError);
   }
 
   const confirmedByUsername = await fetchMatchingUsername(employee);
-  return { lineUserId, displayName, confirmedByUsername };
+  return {
+    lineUserId,
+    displayName,
+    confirmedByUsername: actor && actor.user ? actor.user.username : confirmedByUsername,
+    actorType: actor && actor.user && actor.employeeResolvedBy === 'user_identity' ? 'user' : actor && actor.type,
+    actorId: actor && actor.user && actor.employeeResolvedBy === 'user_identity' ? actor.user.id : actor && actor.id,
+    name: actor && actor.name ? actor.name : displayName,
+  };
 }
 
 function formatBangkokTime(dateValue) {
@@ -148,33 +156,20 @@ async function resolveReviewActor(event) {
 
   let name = 'ผู้จัดการ';
   try {
-    const user = await userRepo.findByLineUserId(lineUserId);
-    if (user) {
+    const actor = await resolveLineActor(lineUserId);
+    if (actor && actor.type) {
+      const actorType = actor.user && actor.employeeResolvedBy === 'user_identity' ? 'user' : actor.type;
+      const actorId = actorType === 'user' && actor.user ? actor.user.id : actor.id;
+      const username = actor.user ? actor.user.username : await fetchMatchingUsername(actor.employee);
       return {
-        actorType: 'user',
-        actorId: user.id,
-        name: user.name || user.username,
-        username: user.username,
-      };
-    }
-  } catch (err) {
-    console.warn('Unable to fetch reviewing user:', err.message || err);
-  }
-
-  try {
-    const employee = await employeeRepo.findByLineUserId(lineUserId);
-    if (employee) {
-      name = employee.nickname || employee.name;
-      const username = await fetchMatchingUsername(employee);
-      return {
-        actorType: 'employee',
-        actorId: employee.id,
-        name,
+        actorType,
+        actorId,
+        name: actor.name,
         username,
       };
     }
   } catch (err) {
-    console.warn('Unable to fetch reviewing employee:', err.message || err);
+    console.warn('Unable to resolve reviewing actor:', err.message || err);
   }
 
   try {
@@ -302,6 +297,7 @@ async function handlePostback(event) {
     if (action === 'approve') {
       const leave = await updateLeaveStatus(leaveId, 'approved', actor, {
         decidedBy: reviewer.username || reviewer.name,
+        editedBy: reviewer.username || reviewer.name,
         decidedAt,
         actorType: reviewer.actorType,
         actorId: reviewer.actorId,
@@ -323,13 +319,13 @@ async function handlePostback(event) {
       if (leave.employees && leave.employees.line_user_id) {
         await replyOrPush({ to: leave.employees.line_user_id, messages: [resultFlex] });
       }
-      await replyOrPush({ ...getReplyTarget(event), messages: [resultFlex] });
       return true;
     }
 
     if (action === 'reject') {
       const leave = await updateLeaveStatus(leaveId, 'rejected', actor, {
         decidedBy: reviewer.username || reviewer.name,
+        editedBy: reviewer.username || reviewer.name,
         decidedAt,
         actorType: reviewer.actorType,
         actorId: reviewer.actorId,
@@ -351,7 +347,6 @@ async function handlePostback(event) {
       if (leave.employees && leave.employees.line_user_id) {
         await replyOrPush({ to: leave.employees.line_user_id, messages: [resultFlex] });
       }
-      await replyOrPush({ ...getReplyTarget(event), messages: [resultFlex] });
       return true;
     }
   }

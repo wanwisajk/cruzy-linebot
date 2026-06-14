@@ -15,6 +15,8 @@ async function createDraftSale({
   source,
   lineGroupId,
   lineUserId,
+  submitterIdentity,
+  submitterId,
 }) {
   const payload = {
     sell_date: date || new Date().toISOString().slice(0,10),
@@ -35,7 +37,11 @@ async function createDraftSale({
   const { data, error } = await supabase.from('sales').insert([payload]).select('*').single();
   if (error) throw error;
 
-  await logEvent('sales_draft_created', { sale_id: data.id, actor: submittedBy });
+  await logEvent('sales_draft_created', {
+    sale_id: data.id,
+    actorType: submitterIdentity || (submittedBy ? 'employee' : 'line'),
+    actorId: submitterId || submittedBy || null,
+  });
   return data;
 }
 

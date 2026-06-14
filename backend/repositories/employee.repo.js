@@ -42,6 +42,18 @@ async function findById(id) {
   return data;
 }
 
+async function findByUserIdentity(user) {
+  if (!user) return null;
+
+  const scopeType = String(user.scope_type || '').toLowerCase();
+  const employeeScopeTypes = new Set(['employee', 'empolyee', 'staff', 'worker']);
+  if (employeeScopeTypes.has(scopeType) && /^\d+$/.test(String(user.scope_value || ''))) {
+    return findById(user.scope_value);
+  }
+
+  return null;
+}
+
 async function updateLineUserId(id, lineUserId) {
   const { data, error } = await supabase
     .from('employees')
@@ -61,5 +73,6 @@ module.exports = {
   findByLineUserId,
   searchByName,
   findById,
+  findByUserIdentity,
   updateLineUserId,
 };

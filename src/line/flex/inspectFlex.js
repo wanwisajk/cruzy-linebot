@@ -1,50 +1,4 @@
-function infoRow(label, value, color = '#111827') {
-  return {
-    type: 'box',
-    layout: 'horizontal',
-    contents: [
-      { type: 'text', text: label, color: '#64748B', size: 'sm', flex: 4 },
-      {
-        type: 'text',
-        text: String(value || '-'),
-        align: 'end',
-        weight: 'bold',
-        color,
-        size: 'sm',
-        flex: 6,
-        wrap: true,
-      },
-    ],
-  };
-}
-
-function baseBubble({ title, subtitle, color, body, footer, altText }) {
-  return {
-    type: 'flex',
-    altText,
-    contents: {
-      type: 'bubble',
-      header: {
-        type: 'box',
-        layout: 'vertical',
-        backgroundColor: color,
-        paddingAll: 'lg',
-        contents: [
-          { type: 'text', text: title, weight: 'bold', color: '#FFFFFF', size: 'lg' },
-          { type: 'text', text: subtitle, color: '#E0F2FE', size: 'xs', wrap: true, margin: 'xs' },
-        ],
-      },
-      body: {
-        type: 'box',
-        layout: 'vertical',
-        spacing: 'sm',
-        backgroundColor: '#F8FAFC',
-        contents: body,
-      },
-      footer,
-    },
-  };
-}
+const { COLORS, row: infoRow, card, bubble: baseBubble, resultFlex } = require('./uiFlex');
 
 function inspectionSummaryFlex({ branchCode, submitterName, photoCount, workDate, submitTime }) {
   return baseBubble({
@@ -53,23 +7,13 @@ function inspectionSummaryFlex({ branchCode, submitterName, photoCount, workDate
     color: '#0F766E',
     altText: `สรุปตรวจร้าน ${branchCode || ''}`,
     body: [
-      {
-        type: 'box',
-        layout: 'vertical',
-        backgroundColor: '#FFFFFF',
-        borderColor: '#E2E8F0',
-        borderWidth: '1px',
-        cornerRadius: 'md',
-        paddingAll: 'md',
-        spacing: 'sm',
-        contents: [
+      card([
           infoRow('สาขา', branchCode || 'ไม่ระบุสาขา'),
           infoRow('ผู้ตรวจ', submitterName || 'ไม่ระบุ'),
           infoRow('วันที่', workDate || '-'),
           infoRow('เวลา', submitTime ? String(submitTime).slice(0, 5) : '-'),
           infoRow('รูปตรวจร้าน', `${photoCount || 0} รูป`, '#1D4ED8'),
-        ],
-      },
+      ]),
     ],
     footer: {
       type: 'box',
@@ -94,23 +38,13 @@ function inspectionPendingFlex({ inspectionId, branchCode, submitterName, photoC
     color: '#0F172A',
     altText: `ตรวจร้าน #${inspectionId} รออนุมัติ`,
     body: [
-      {
-        type: 'box',
-        layout: 'vertical',
-        backgroundColor: '#FFFFFF',
-        borderColor: '#E2E8F0',
-        borderWidth: '1px',
-        cornerRadius: 'md',
-        paddingAll: 'md',
-        spacing: 'sm',
-        contents: [
+      card([
           infoRow('สาขา', branchCode || 'ไม่ระบุสาขา'),
           infoRow('ผู้ตรวจ', submitterName || 'ไม่ระบุ'),
           infoRow('วันที่', workDate || '-'),
           infoRow('เวลา', submitTime ? String(submitTime).slice(0, 5) : '-'),
           infoRow('รูปแนบ', `${photoCount || 0} รูป`, '#1D4ED8'),
-        ],
-      },
+      ]),
     ],
     footer: {
       type: 'box',
@@ -135,29 +69,17 @@ function inspectionPendingFlex({ inspectionId, branchCode, submitterName, photoC
 
 function inspectionResultFlex({ inspectionId, branchCode, status, reviewedBy, reviewTime, managerNote }) {
   const ok = status === 'pass';
-  return baseBubble({
+  return resultFlex({
     title: ok ? 'ตรวจร้านอนุมัติแล้ว' : 'ตรวจร้านมีปัญหา',
     subtitle: `รายการ #${inspectionId}`,
-    color: ok ? '#16A34A' : '#DC2626',
+    statusLabel: ok ? 'อนุมัติ' : 'มีปัญหา',
+    statusColor: ok ? COLORS.success : COLORS.danger,
     altText: ok ? 'ผลตรวจร้าน: อนุมัติ' : 'ผลตรวจร้าน: มีปัญหา',
-    body: [
-      {
-        type: 'box',
-        layout: 'vertical',
-        backgroundColor: '#FFFFFF',
-        borderColor: '#E2E8F0',
-        borderWidth: '1px',
-        cornerRadius: 'md',
-        paddingAll: 'md',
-        spacing: 'sm',
-        contents: [
+    rows: [
           infoRow('สาขา', branchCode || '-'),
-          infoRow('สถานะ', ok ? 'อนุมัติ' : 'มีปัญหา', ok ? '#16A34A' : '#DC2626'),
           infoRow('ผู้ตรวจอนุมัติ', reviewedBy || 'ผู้จัดการ'),
           infoRow('เวลา', reviewTime ? String(reviewTime).slice(0, 5) : '-'),
           infoRow('หมายเหตุ', managerNote || (ok ? 'ผ่านการตรวจ' : 'พบปัญหา')),
-        ],
-      },
     ],
   });
 }

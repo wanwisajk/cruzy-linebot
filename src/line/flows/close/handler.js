@@ -1,8 +1,8 @@
-const employeeRepo = require('../../../../backend/repositories/employee.repo');
 const { supabase } = require('../../../../backend/config/supabase');
 const closeFlex = require('../../flex/closeFlex');
 const { replyOrPush } = require('../../reply');
 const { logEvent } = require('../../utils/audit');
+const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const {
   parseDateFromText,
@@ -22,16 +22,20 @@ async function handle(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
   const source = event.source || {};
   const lineUserId = source.userId || null;
-  const employee = lineUserId ? await employeeRepo.findByLineUserId(lineUserId) : null;
+  const actorInfo = lineUserId ? await resolveLineActor(lineUserId) : null;
+  const employee = actorInfo && actorInfo.employee ? actorInfo.employee : null;
+  const eventTime = event.timestamp ? new Date(event.timestamp) : new Date();
+  const workDate = parseDateFromText(text, eventTime);
 
-  const { branch, lineGroupId } = await resolveBranchFromEvent(event, text);
+  const { branch, lineGroupId } = await resolveBranchFromEvent(event, text, {
+    employeeId: employee ? employee.id : null,
+    workDate,
+  });
   if (!branch) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์เช่น ปิดร้าน CCA 20:00' }] });
     return;
   }
 
-  const eventTime = event.timestamp ? new Date(event.timestamp) : new Date();
-  const workDate = parseDateFromText(text, eventTime);
   const clockOut = parseTimeFromText(text, eventTime);
   const schedule = await getBranchScheduleWindow({
     employeeId: employee ? employee.id : null,
@@ -124,6 +128,9 @@ async function handle(event) {
 
   await logEvent('close_shop_reported', {
     actor: employee ? employee.id : lineUserId,
+    actorType: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? 'user' : actorInfo && actorInfo.type,
+    actorId: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? actorInfo.user.id : actorInfo && actorInfo.id,
+    actorName: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? actorInfo.user.name : actorInfo && actorInfo.name,
     branch_id: branch.id,
     branch_code: branch.code,
     reported_at: eventTime.toISOString(),
@@ -134,7 +141,7 @@ async function handle(event) {
     replyToken: event.replyToken,
     messages: [closeFlex({
       branchCode: branch.code,
-      employeeName: employee ? (employee.nickname || employee.name) : 'ไม่ระบุ',
+      employeeName: actorInfo && actorInfo.name ? actorInfo.name : employee ? (employee.nickname || employee.name) : 'ไม่ระบุ',
       time: `${workDate} ${clockOut.slice(0, 5)}`,
       expectedTime: schedule.shiftEnd,
       closedEarlyBy,
