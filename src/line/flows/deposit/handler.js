@@ -1,7 +1,7 @@
 const depositFlex = require('../../flex/depositFlex');
 const { replyOrPush } = require('../../reply');
 const { parseDepositText } = require('./parser');
-const { recordDeposit, uploadSlipImage } = require('./service');
+const { recordDeposit, uploadSlipImage, resolveBankAccount } = require('./service');
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./state');
 const { logEvent } = require('../../utils/audit');
 const { resolveLineActor } = require('../../utils/actor');
@@ -32,7 +32,7 @@ async function handle(event) {
 
   const pending = getDepositState(actor);
   if (pending && pending.status === DEPOSIT_STATUS.AWAITING_SLIP) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'รอรูปสลิปจากยอดฝากก่อนหน้าก่อนครับ ส่งรูปสลิป 1 รูปได้เลย' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'รอรูปสลิปจากยอดฝากก่อนหน้าก่อนครับ ส่งรูปเพิ่มได้เลย หรือกด "ยืนยันส่ง" เมื่อพร้อม' }] });
     return;
   }
 
@@ -51,12 +51,17 @@ async function handle(event) {
     return;
   }
 
+  const bankAccount = await resolveBankAccount(parsed.bank, parsed.bankShort);
+
   setDepositState(actor, {
     status: DEPOSIT_STATUS.AWAITING_SLIP,
     amount: parsed.amount,
     depositDate: parsed.depositDate,
     bank: parsed.bank,
     bankShort: parsed.bankShort,
+    bankAccountId: bankAccount ? bankAccount.id : null,
+    bankAccountName: bankAccount ? bankAccount.account_name : null,
+    bankAccountNo: bankAccount ? bankAccount.account_no : null,
     branchId: branch.id,
     branchCode: branch.code,
     branchName: branch.name,
@@ -71,6 +76,8 @@ async function handle(event) {
     employeeId: actorInfo.employee ? actorInfo.employee.id : null,
     employeeName: actorInfo.name || 'ไม่ระบุผู้ฝาก',
     replyToken: event.replyToken,
+    slipUrls: [],
+    source: 'line',
   });
 
   await replyOrPush({
@@ -109,7 +116,7 @@ async function handleImageMessage(event) {
   if (!actor) return false;
 
   const state = getDepositState(actor);
-  if (!state || state.status !== DEPOSIT_STATUS.AWAITING_SLIP) {
+  if (!state || (state.status !== DEPOSIT_STATUS.AWAITING_SLIP && state.status !== DEPOSIT_STATUS.AWAITING_CONFIRMATION)) {
     return false;
   }
 
@@ -120,38 +127,28 @@ async function handleImageMessage(event) {
   }
 
   const slipUrl = await uploadSlipImage(messageId);
-  const created = await recordDeposit({
-    deposit_date: state.depositDate,
-    branch_id: state.branchId,
-    deposited_by: state.employeeId,
-    deposited_amount: state.amount,
-    bank: state.bank || null,
-    bank_short: state.bankShort || null,
-    slip_url: slipUrl,
-    source: 'line',
-    line_group_id: state.lineGroupId,
-    line_user_id: state.lineUserId,
-    message_text: state.messageText,
-    submitted_at: state.submittedAt,
-  });
-
-  await logEvent('deposit_recorded', {
-    deposit: created,
-    actorType: state.actorType || (state.employeeId ? 'employee' : 'line'),
-    actorId: state.actorId || state.employeeId || null,
-  });
-  setDepositState(actor, null);
-
-  const flex = depositFlex({
-    amount: state.amount,
-    bank: state.bank,
-    diff: state.diff,
-    branchCode: state.branchCode,
-    depositDate: state.depositDate,
-    depositedBy: state.employeeName,
+  const slipUrls = Array.isArray(state.slipUrls) ? state.slipUrls.slice() : [];
+  slipUrls.push(slipUrl);
+  const nextStatus = state.status === DEPOSIT_STATUS.AWAITING_SLIP
+    ? DEPOSIT_STATUS.AWAITING_CONFIRMATION
+    : state.status;
+  setDepositState(actor, {
+    ...state,
+    status: nextStatus,
     slipUrl,
+    slipUrls,
+    tempId: String(actor),
   });
-  await replyOrPush({ replyToken: event.replyToken, messages: [flex] });
+
+  if (state.status === DEPOSIT_STATUS.AWAITING_SLIP) {
+    const confirmFlex = depositFlex.depositConfirmFlex({
+      tempId: actor,
+      amount: state.amount,
+      bank: state.bankAccountName || state.bankShort || state.bank,
+      slipCount: slipUrls.length,
+    });
+    await replyOrPush({ replyToken: event.replyToken, messages: [confirmFlex] });
+  }
   return true;
 }
 

@@ -23,6 +23,28 @@ async function resolveBankAccountId(bank, bankShort) {
   return null;
 }
 
+async function resolveBankAccount(bank, bankShort) {
+  const candidates = [bankShort, bank].filter(Boolean);
+  if (candidates.length === 0) return null;
+
+  for (const value of candidates) {
+    const { data, error } = await supabase
+      .from('bank_accounts')
+      .select('id,bank_name,bank_short,account_name,account_no')
+      .or(`bank_short.eq.${String(value)},bank_name.ilike.${String(value)}`)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Unable to resolve bank account:', error.message || error, { bank, bankShort });
+      continue;
+    }
+
+    if (data && data.id) return data;
+  }
+
+  return null;
+}
+
 async function uploadSlipImage(messageId) {
   const contentResponse = await blobClient.getMessageContent(messageId);
   const chunks = [];
@@ -65,9 +87,24 @@ async function recordDeposit({
   submitted_at,
 }) {
   const bankAccountId = await resolveBankAccountId(bank, bank_short);
+  const normalizedDepositDate = deposit_date || new Date().toISOString().slice(0,10);
+
+  if (branch_id) {
+    const { data: existing, error: fetchError } = await supabase
+      .from('cash_deposits')
+      .select('*')
+      .eq('branch_id', branch_id)
+      .eq('deposit_date', normalizedDepositDate)
+      .maybeSingle();
+
+    if (fetchError) throw fetchError;
+    if (existing) {
+      return existing;
+    }
+  }
 
   const payload = {
-    deposit_date: deposit_date || new Date().toISOString().slice(0,10),
+    deposit_date: normalizedDepositDate,
     branch_id,
     expected_amount: 0,
     deposited_amount: deposited_amount || 0,
@@ -88,4 +125,4 @@ async function recordDeposit({
   return data;
 }
 
-module.exports = { recordDeposit, uploadSlipImage, resolveBankAccountId };
+module.exports = { recordDeposit, uploadSlipImage, resolveBankAccountId, resolveBankAccount };

@@ -6,9 +6,12 @@ const { replyOrPush } = require('./reply');
 const { logEvent } = require('./utils/audit');
 const { approvedFlex, rejectedFlex } = require('./flex/salesFlex');
 const leaveFlex = require('./flex/leaveFlex');
+const depositFlex = require('./flex/depositFlex');
 const { resolveLineActor } = require('./utils/actor');
 const { fetchInspectionById, updateInspectionReview } = require('./flows/inspect/service');
 const { inspectionPendingFlex, inspectionResultFlex } = require('./flex/inspectFlex');
+const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
+const { recordDeposit } = require('./flows/deposit/service');
 
 async function fetchSaleById(saleId) {
   const { data, error } = await supabase
@@ -354,6 +357,223 @@ async function handlePostback(event) {
   }
 
   // sales_action|<saleId>|approve or reject
+  // deposit_action|<depositId>|approve or reject
+  if (normalizedData.startsWith('deposit_draft|')) {
+    const parts = normalizedData.split('|');
+    const action = String(parts[2] || '').trim().toLowerCase();
+    const replyTarget = getReplyTarget(event);
+    const source = event.source || {};
+    const actor = source.userId || null;
+    const pendingState = actor ? getDepositState(actor) : null;
+
+    if (!pendingState || pendingState.status !== DEPOSIT_STATUS.AWAITING_CONFIRMATION) {
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'ไม่พบข้อมูลสรุปฝากเงินที่รอส่งอยู่ครับ กรุณาเริ่มใหม่' }] });
+      return true;
+    }
+
+    if (action === 'cancel') {
+      setDepositState(actor, null);
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'ยกเลิกรายการฝากเงินแล้วครับ' }] });
+      return true;
+    }
+
+    if (action !== 'send') {
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'คำสั่งไม่ถูกต้อง' }] });
+      return true;
+    }
+
+    const created = await recordDeposit({
+      deposit_date: pendingState.depositDate,
+      branch_id: pendingState.branchId,
+      deposited_by: pendingState.employeeId,
+      deposited_amount: pendingState.amount,
+      bank: pendingState.bank || null,
+      bank_short: pendingState.bankShort || null,
+      slip_url: pendingState.slipUrls && pendingState.slipUrls[0] ? pendingState.slipUrls[0] : pendingState.slipUrl || null,
+      source: 'line',
+      line_group_id: pendingState.lineGroupId,
+      line_user_id: pendingState.lineUserId,
+      message_text: pendingState.messageText,
+      submitted_at: pendingState.submittedAt,
+    });
+
+    await logEvent('deposit_recorded', {
+      deposit: created,
+      actorType: pendingState.actorType || (pendingState.employeeId ? 'employee' : 'line'),
+      actorId: pendingState.actorId || pendingState.employeeId || null,
+    });
+
+    setDepositState(actor, null);
+
+    if (created.__duplicate) {
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'รายการฝากเงินของสาขา/วันนี้มีอยู่แล้ว ใช้รายการเดิมต่อครับ' }] });
+      return true;
+    }
+
+    if (created && created.line_group_id) {
+      try {
+        const managerFlex = depositFlex.managerApprovalFlex({
+          depositId: created.id,
+          branchCode: created.branches ? (created.branches.code || created.branches.name) : pendingState.branchCode,
+          depositDate: created.deposit_date,
+          amount: created.deposited_amount,
+          bankShort: pendingState.bankShort || null,
+          bankName: pendingState.bank || null,
+          accountName: pendingState.bankAccountName || null,
+          accountNo: pendingState.bankAccountNo || null,
+          slipCount: pendingState.slipUrls ? pendingState.slipUrls.length : (pendingState.slipUrl ? 1 : 0),
+          slipUrls: pendingState.slipUrls || (pendingState.slipUrl ? [pendingState.slipUrl] : []),
+          submittedAt: pendingState.submittedAt,
+          lineUserId: pendingState.lineUserId,
+          messageText: pendingState.messageText,
+          source: pendingState.source || 'line',
+          depositedBy: pendingState.employeeName,
+        });
+        await replyOrPush({ to: created.line_group_id, messages: [managerFlex] });
+      } catch (err) {
+        console.warn('Failed to send manager approval flex for deposit:', err.message || err, { depositId: created && created.id });
+      }
+    }
+    return true;
+  }
+
+  if (normalizedData.startsWith('deposit_action|')) {
+    const parts = normalizedData.split('|');
+    const depositId = parts[1];
+    const action = String(parts[2] || '').trim().toLowerCase();
+    const replyTarget = getReplyTarget(event);
+    const source = event.source || {};
+    const actor = source.userId || null;
+
+    const pendingState = actor ? getDepositState(actor) : null;
+    if (pendingState && pendingState.status === DEPOSIT_STATUS.AWAITING_CONFIRMATION && (action === 'send' || action === 'edit')) {
+      if (action === 'edit') {
+        setDepositState(actor, null);
+        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'แก้ไขข้อมูลได้เลยครับ พิมพ์ยอดฝากใหม่อีกครั้ง' }] });
+        return true;
+      }
+
+      const created = await recordDeposit({
+        deposit_date: pendingState.depositDate,
+        branch_id: pendingState.branchId,
+        deposited_by: pendingState.employeeId,
+        deposited_amount: pendingState.amount,
+        bank: pendingState.bank || null,
+        bank_short: pendingState.bankShort || null,
+        slip_url: pendingState.slipUrl || null,
+        source: 'line',
+        line_group_id: pendingState.lineGroupId,
+        line_user_id: pendingState.lineUserId,
+        message_text: pendingState.messageText,
+        submitted_at: pendingState.submittedAt,
+      });
+
+      await logEvent('deposit_recorded', {
+        deposit: created,
+        actorType: pendingState.actorType || (pendingState.employeeId ? 'employee' : 'line'),
+        actorId: pendingState.actorId || pendingState.employeeId || null,
+      });
+      setDepositState(actor, null);
+
+      if (created && created.line_group_id) {
+        try {
+          const managerFlex = depositFlex.managerApprovalFlex({
+            depositId: created.id,
+            branchCode: created.branches ? (created.branches.code || created.branches.name) : pendingState.branchCode,
+            depositDate: created.deposit_date,
+            amount: created.deposited_amount,
+            bankShort: pendingState.bankShort || null,
+            bankName: pendingState.bank || null,
+            accountName: pendingState.bankAccountName || null,
+            accountNo: pendingState.bankAccountNo || null,
+            slipCount: pendingState.slipUrls ? pendingState.slipUrls.length : (pendingState.slipUrl ? 1 : 0),
+            slipUrls: pendingState.slipUrls || (pendingState.slipUrl ? [pendingState.slipUrl] : []),
+            submittedAt: pendingState.submittedAt,
+            lineUserId: pendingState.lineUserId,
+            messageText: pendingState.messageText,
+            source: pendingState.source || 'line',
+            depositedBy: pendingState.employeeName,
+          });
+          await replyOrPush({ to: created.line_group_id, messages: [managerFlex] });
+        } catch (err) {
+          console.warn('Failed to send manager approval flex for deposit:', err.message || err, { depositId: created && created.id });
+        }
+      }
+      return true;
+    }
+
+    if (pendingState && pendingState.status === DEPOSIT_STATUS.AWAITING_CONFIRMATION) {
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'กรุณากด "ยืนยันและส่ง" หรือ "แก้ไขข้อมูล" ในหน้าสรุปก่อนครับ' }] });
+      return true;
+    }
+
+    const { data: deposit, error: fetchError } = await supabase
+      .from('cash_deposits')
+      .select('*,branches(code,name),bank_accounts(bank_name,bank_short,account_name,account_no),employees(name,nickname,line_user_id)')
+      .eq('id', depositId)
+      .maybeSingle();
+
+    if (fetchError || !deposit) {
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'ไม่พบรายการฝากเงินนี้' }] });
+      return true;
+    }
+
+    if (deposit.status === 'verified') {
+      await replyOrPush({
+        ...replyTarget,
+        messages: [{ type: 'text', text: 'รายการนี้อนุมัติไปแล้ว' }],
+      });
+      return true;
+    }
+
+    const actorInfo = await resolveApprovalActor(event);
+    const actorName = actorInfo.displayName;
+    const timestamp = formatThaiDateTime(new Date());
+
+    if (action === 'approve') {
+      const payload = {
+        status: 'verified',
+        verified_at: new Date().toISOString(),
+        verified_by: actorInfo.confirmedByUsername || null,
+        updated_at: new Date().toISOString(),
+        line_notified: false,
+      };
+
+      const { data: updated, error: updateError } = await supabase.from('cash_deposits').update(payload).eq('id', depositId).select('*').maybeSingle();
+      if (updateError) {
+        console.warn('Failed to update deposit status:', updateError.message || updateError, { depositId });
+        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'เกิดข้อผิดพลาดในการบันทึกสถานะ กรุณาลองใหม่' }] });
+        return true;
+      }
+
+      await logEvent('deposit_verified_by_manager', { deposit_id: depositId, actor, verified_by: actorName, confirmed_by: actorInfo.confirmedByUsername || null });
+      return true;
+    }
+
+    if (action === 'reject') {
+      const payload = {
+        status: 'rejected',
+        verified_at: new Date().toISOString(),
+        verified_by: actorInfo.confirmedByUsername || null,
+        updated_at: new Date().toISOString(),
+        line_notified: false,
+      };
+      const { data: updated, error: updateError } = await supabase.from('cash_deposits').update(payload).eq('id', depositId).select('*').maybeSingle();
+      if (updateError) {
+        console.warn('Failed to update deposit status (reject):', updateError.message || updateError, { depositId });
+        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'เกิดข้อผิดพลาดในการบันทึกสถานะ กรุณาลองใหม่' }] });
+        return true;
+      }
+
+      await logEvent('deposit_rejected_by_manager', { deposit_id: depositId, actor, rejected_by: actorName, confirmed_by: actorInfo.confirmedByUsername || null });
+      await replyOrPush({
+        ...replyTarget,
+        messages: [{ type: 'text', text: `รายการฝากเงิน #${updated.id} ถูกตีกลับแล้ว` }],
+      });
+      return true;
+    }
+  }
+
   if (normalizedData.startsWith('sales_action|')) {
     const parts = normalizedData.split('|');
     const saleId = parts[1];
@@ -370,38 +590,15 @@ async function handlePostback(event) {
       return true;
     }
 
-    if (sale.status === 'approved') {
+    if (sale.status === 'confirmed') {
       const approvedBy = String(sale.confirmed_by || sale.approved_by || 'ผู้จัดการ');
       const approvedAt = formatThaiDateTime(sale.confirmed_at || sale.updated_at);
-      const notification = approvedFlex({
-        saleId,
-        branchCode: getSaleBranchCode(sale),
-        total: sale.total_amount || 0,
-        approvedBy,
-        approvedAt
-      });
-
-      const messages = [notification, { type: 'text', text: 'รายการนี้อนุมัติไปแล้ว' }];
+      const messages = [{ type: 'text', text: 'รายการนี้อนุมัติไปแล้ว' }];
 
       await replyOrPush({
         ...replyTarget,
         messages,
       });
-
-      if (!sale.line_notified && sale.line_group_id) {
-        const groupId = sale.line_group_id;
-        const targetIsSameGroup = replyTarget.to === groupId;
-        if (!targetIsSameGroup) {
-          await replyOrPush({
-            to: groupId,
-            messages: [notification],
-          });
-        }
-        await supabase
-          .from('sales')
-          .update({ line_notified: true, updated_at: new Date().toISOString() })
-          .eq('id', saleId);
-      }
 
       return true;
     }
@@ -409,34 +606,12 @@ async function handlePostback(event) {
     if (sale.status === 'rejected') {
       const rejectedBy = String(sale.confirmed_by || sale.rejected_by || 'ผู้จัดการ');
       const rejectedAt = formatThaiDateTime(sale.confirmed_at || sale.updated_at);
-      const notification = rejectedFlex({
-        saleId,
-        branchCode: getSaleBranchCode(sale),
-        rejectedBy,
-        rejectedAt
-      });
-
-      const messages = [notification, { type: 'text', text: 'รายการนี้ถูกตีกลับไปแล้ว' }];
+      const messages = [{ type: 'text', text: 'รายการนี้ถูกตีกลับไปแล้ว' }];
 
       await replyOrPush({
         ...replyTarget,
         messages,
       });
-
-      if (!sale.line_notified && sale.line_group_id) {
-        const groupId = sale.line_group_id;
-        const targetIsSameGroup = replyTarget.to === groupId;
-        if (!targetIsSameGroup) {
-          await replyOrPush({
-            to: groupId,
-            messages: [notification],
-          });
-        }
-        await supabase
-          .from('sales')
-          .update({ line_notified: true, updated_at: new Date().toISOString() })
-          .eq('id', saleId);
-      }
 
       return true;
     }
@@ -448,7 +623,7 @@ async function handlePostback(event) {
     const total = sale.total_amount || 0;
 
     if (action === 'approve') {
-      const updatedSale = await updateSaleStatusWithTimestamp(saleId, 'approved', {
+      const updatedSale = await updateSaleStatusWithTimestamp(saleId, 'confirmed', {
         confirmedByUsername: actorInfo.confirmedByUsername,
         lineNotified: Boolean(sale.line_group_id),
       });
@@ -458,32 +633,7 @@ async function handlePostback(event) {
         approved_by: actorName,
         confirmed_by: actorInfo.confirmedByUsername || null,
       });
-      await replyOrPush({
-        ...replyTarget,
-        messages: [
-          approvedFlex({
-            saleId,
-            branchCode,
-            total,
-            approvedBy: actorName,
-            approvedAt: timestamp
-          })
-        ]
-      });
-      if (updatedSale && updatedSale.line_group_id) {
-        await replyOrPush({
-          to: updatedSale.line_group_id,
-          messages: [
-            approvedFlex({
-              saleId,
-              branchCode,
-              total,
-              approvedBy: actorName,
-              approvedAt: timestamp
-            })
-          ]
-        });
-      }
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: `บันทึกการอนุมัติยอดขาย #${saleId} เรียบร้อยแล้ว` }] });
       return true;
     }
 
@@ -498,30 +648,7 @@ async function handlePostback(event) {
         rejected_by: actorName,
         confirmed_by: actorInfo.confirmedByUsername || null,
       });
-      await replyOrPush({
-        ...replyTarget,
-        messages: [
-          rejectedFlex({
-            saleId,
-            branchCode,
-            rejectedBy: actorName,
-            rejectedAt: timestamp
-          })
-        ]
-      });
-      if (updatedSale && updatedSale.line_group_id) {
-        await replyOrPush({
-          to: updatedSale.line_group_id,
-          messages: [
-            rejectedFlex({
-              saleId,
-              branchCode,
-              rejectedBy: actorName,
-              rejectedAt: timestamp
-            })
-          ]
-        });
-      }
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: `รายการยอดขาย #${saleId} ถูกตีกลับแล้ว` }] });
       return true;
     }
 

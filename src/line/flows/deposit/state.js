@@ -2,6 +2,7 @@ const depositStates = new Map();
 
 const DEPOSIT_STATUS = {
   AWAITING_SLIP: 'awaiting_slip',
+  AWAITING_CONFIRMATION: 'awaiting_confirmation',
 };
 
 function getDepositState(userId) {

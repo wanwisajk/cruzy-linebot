@@ -210,7 +210,7 @@ async function handleUploadPrompt(event) {
     replyToken: event.replyToken,
     messages: [{
       type: 'text',
-      text: 'ส่งรูปหลักฐาน 3 รูปได้เลยครับ ระบบจะเงียบไว้ก่อน แล้วสรุปทั้งหมดให้อัตโนมัติเมื่อครบ 3 รูป',
+      text: 'ส่งรูปหลักฐาน 3 รูปได้เลย แล้วสรุปทั้งหมดให้อัตโนมัติเมื่อครบ 3 รูป',
       quickReply: {
         items: [
           {
@@ -299,7 +299,10 @@ async function handleConfirmation(event) {
       });
 
       const messageIds = flowState.images.map(img => img.message_id);
-      await saveAttachments(sale.id, messageIds);
+      const attachments = await saveAttachments(sale.id, messageIds);
+      const attachmentUrls = (attachments || [])
+        .map((item) => item && item.file_url)
+        .filter(Boolean);
 
       // เคลียร์ Flow ออกจาก Memory
       setFlowState(lineUserId, null);
@@ -316,6 +319,7 @@ async function handleConfirmation(event) {
           transfer: flowState.parsed_data.transfer_amount,
           total: flowState.parsed_data.total_sales,
           imageCount: messageIds.length,
+          attachmentUrls,
         }) ]
       });
 

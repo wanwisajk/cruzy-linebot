@@ -5,6 +5,7 @@ const payrollFlex = require('../flex/payrollFlex');
 const alertFlex = require('../flex/alertFlex');
 const leaveFlex = require('../flex/leaveFlex');
 const { approvedFlex, rejectedFlex, approvedSalesResultFlex } = require('../flex/salesFlex');
+const depositFlex = require('../flex/depositFlex');
 
 let running = false;
 
@@ -274,12 +275,77 @@ async function notifySalesResults() {
   }
 }
 
+async function notifyCashDepositResults() {
+  let { data, error } = await supabase
+    .from('cash_deposits')
+    .select(`
+      id,
+      deposit_date,
+      expected_amount,
+      deposited_amount,
+      status,
+      verified_by,
+      verified_at,
+      line_group_id,
+      line_notified,
+      branches(code,name),
+      bank_accounts(bank_name,bank_short,account_name,account_no),
+      employees(name,nickname)
+    `)
+    .eq('status', 'verified')
+    .not('line_group_id', 'is', null)
+    .or('line_notified.eq.false,line_notified.is.null')
+    .order('verified_at', { ascending: true });
+
+  if (error) {
+    console.warn('Cash deposit notification job query failed:', error.message || error);
+    return;
+  }
+
+  for (const deposit of data || []) {
+    const groupId = deposit.line_group_id;
+    if (!groupId) continue;
+
+    const branchCode = deposit.branches ? (deposit.branches.code || deposit.branches.name) : '-';
+    const depositDate = deposit.deposit_date ? new Date(deposit.deposit_date).toLocaleDateString('th-TH') : '-';
+    const depositedBy = deposit.employees ? (deposit.employees.nickname || deposit.employees.name) : (deposit.line_user_id || '-');
+    const verifiedBy = deposit.verified_by || '-';
+    const verifiedAt = deposit.verified_at ? new Date(deposit.verified_at).toLocaleString('th-TH') : '-';
+
+    const message = depositFlex.depositResultFlex({
+      id: deposit.id,
+      branchCode,
+      depositDate,
+      expectedAmount: deposit.expected_amount,
+      depositedAmount: deposit.deposited_amount,
+      bankShort: deposit.bank_accounts ? deposit.bank_accounts.bank_short : null,
+      bankName: deposit.bank_accounts ? deposit.bank_accounts.bank_name : null,
+      accountName: deposit.bank_accounts ? deposit.bank_accounts.account_name : null,
+      accountNo: deposit.bank_accounts ? deposit.bank_accounts.account_no : null,
+      depositedBy,
+      verifiedBy,
+      verifiedAt,
+    });
+
+    try {
+      await push(groupId, message);
+      await supabase
+        .from('cash_deposits')
+        .update({ line_notified: true, updated_at: new Date().toISOString() })
+        .eq('id', deposit.id);
+    } catch (sendError) {
+      console.warn('Cash deposit approval notification failed:', sendError.message || sendError, { deposit_id: deposit.id, groupId });
+    }
+  }
+}
+
 async function runLineJobs(date = new Date()) {
   if (running) return;
   running = true;
   try {
     await sendLeaveResults();
     await notifySalesResults();
+    await notifyCashDepositResults();
     await sendTodayWarningLetters(date);
     await sendTodayAttendanceAlerts(date);
     await sendMonthEndPayroll(date);
@@ -297,4 +363,5 @@ module.exports = {
   sendTodayAttendanceAlerts,
   sendMonthEndPayroll,
   notifySalesResults,
+  notifyCashDepositResults,
 };

@@ -124,11 +124,6 @@ async function handleImageMessage(event) {
 
   const imageMessages = [...(state.imageMessages || []), messageId];
   updateInspectionState(stateKey, { imageMessages });
-
-  await replyOrPush({
-    replyToken: event.replyToken,
-    messages: [{ type: 'text', text: `รับรูปตรวจร้านแล้ว ${imageMessages.length} รูป\nส่งต่อได้เลย หรือพิมพ์ “ตรวจเสร็จ” เมื่อครบ` }],
-  });
   return true;
 }
 

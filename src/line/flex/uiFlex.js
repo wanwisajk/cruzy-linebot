@@ -80,7 +80,7 @@ function secondaryButton(label, action) {
   return { type: 'button', style: 'secondary', action };
 }
 
-function resultFlex({ title, subtitle, statusLabel, statusColor, rows, altText }) {
+function resultFlex({ title, subtitle, statusLabel, statusColor, rows, altText, footer }) {
   return bubble({
     title,
     subtitle,
@@ -92,6 +92,7 @@ function resultFlex({ title, subtitle, statusLabel, statusColor, rows, altText }
         row('สถานะ', statusLabel, statusColor),
       ]),
     ],
+    footer,
   });
 }
 
