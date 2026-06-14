@@ -204,7 +204,7 @@ function leaveApprovalFlex({ id, employeeName, branchCode, type, from, to, reaso
   });
 }
 
-function leaveResultFlex({ id, employeeName, type, from, to, status, approvedBy, managerNote }) {
+function leaveResultFlex({ id, employeeName, type, from, to, status, approvedBy }) {
   const approved = status === 'approved';
   const rows = [
     uiRow('ผู้ขอ', employeeName || '-'),
@@ -212,10 +212,6 @@ function leaveResultFlex({ id, employeeName, type, from, to, status, approvedBy,
     uiRow('วันที่', `${from || '-'} - ${to || '-'}`),
     uiRow('ผู้อนุมัติ', approvedBy || 'ผู้จัดการ'),
   ];
-
-  if (!approved && managerNote) {
-    rows.push(uiRow('เหตุผล', managerNote));
-  }
 
   return resultFlex({
     title: approved ? 'อนุมัติวันลาเรียบร้อย' : 'ไม่อนุมัติวันลา',
