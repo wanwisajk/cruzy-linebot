@@ -368,6 +368,15 @@ function managerApprovalFlex({ saleId, branchCode, submitterName, cash, credit, 
               label: '✅ อนุมัติ',
               data: `sales_action|${saleId}|approve`
             }
+          },
+          {
+            type: 'button',
+            style: 'secondary',
+            action: {
+              type: 'postback',
+              label: '❌ ไม่อนุมัติ',
+              data: `sales_action|${saleId}|reject`
+            }
           }
           
         ]
@@ -461,6 +470,26 @@ function approvedFlex({ saleId, branchCode, total, approvedBy, approvedAt }) {
       uiRow('Sale ID', saleId),
       uiRow('สาขา', branchCode || 'ไม่ระบุสาขา'),
       uiRow('ยอดรวม', `${Number(total || 0).toLocaleString()} บาท`, COLORS.success),
+      uiRow('อนุมัติโดย', approvedBy || 'ผู้จัดการ'),
+      uiRow('เวลาอนุมัติ', approvedAt || 'ไม่ระบุเวลา'),
+    ],
+  });
+}
+
+function approvedSalesResultFlex({ saleId, branchCode, saleDate, total, cash, credit, transfer, approvedBy, approvedAt }) {
+  return resultFlex({
+    title: '✅ อนุมัติยอดขายเรียบร้อย',
+    subtitle: `รายการ #${saleId}`,
+    statusLabel: 'อนุมัติแล้ว',
+    statusColor: COLORS.success,
+    altText: 'อนุมัติยอดขายเรียบร้อย',
+    rows: [
+      uiRow('สาขา', branchCode || 'ไม่ระบุสาขา'),
+      uiRow('วันที่', saleDate || '-'),
+      uiRow('ยอดขายรวม', `${Number(total || 0).toLocaleString()} บาท`, COLORS.success),
+      uiRow('เงินสด', `${Number(cash || 0).toLocaleString()} บาท`),
+      uiRow('โอนเงิน', `${Number(transfer || 0).toLocaleString()} บาท`),
+      uiRow('บัตรเครดิต', `${Number(credit || 0).toLocaleString()} บาท`),
       uiRow('อนุมัติโดย', approvedBy || 'ผู้จัดการ'),
       uiRow('เวลาอนุมัติ', approvedAt || 'ไม่ระบุเวลา'),
     ],
@@ -564,6 +593,7 @@ module.exports = {
   finalReviewFlex,
   managerApprovalFlex,
   approvedFlex,
+  approvedSalesResultFlex,
   salesNoticeFlex,
   rejectedFlex,
 };

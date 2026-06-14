@@ -2,6 +2,11 @@ const { supabase } = require('../../../../backend/config/supabase');
 const { lineClient, blobClient } = require('../../../../backend/config/line');
 const { logEvent } = require('../../utils/audit');
 
+function isMissingColumnError(error) {
+  const message = `${error && error.message || ''} ${error && error.details || ''}`;
+  return error && (error.code === 'PGRST204' || /column|schema cache/i.test(message));
+}
+
 async function createDraftSale({
   branchId,
   date,
@@ -32,9 +37,17 @@ async function createDraftSale({
     source: source || 'line',
     line_group_id: lineGroupId || null,
     line_user_id: lineUserId || null,
+    line_notified: false,
   };
 
-  const { data, error } = await supabase.from('sales').insert([payload]).select('*').single();
+  let { data, error } = await supabase.from('sales').insert([payload]).select('*').single();
+  if (error && isMissingColumnError(error)) {
+    const fallbackPayload = { ...payload };
+    delete fallbackPayload.line_notified;
+    const retry = await supabase.from('sales').insert([fallbackPayload]).select('*').single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw error;
 
   await logEvent('sales_draft_created', {
@@ -56,18 +69,37 @@ async function updateSaleStatus(saleId, status) {
 async function updateSaleStatusWithTimestamp(saleId, status, options = {}) {
   const payload = {
     status,
-    confirmed_at: new Date().toISOString()
+    confirmed_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   };
 
   if (options.confirmedByUsername) {
     payload.confirmed_by = options.confirmedByUsername;
   }
 
-  if (options.actorType) payload.audit_actor_type = options.actorType;
-  if (options.actorId) payload.audit_actor_id = String(options.actorId);
-  if (options.actorName) payload.audit_actor_name = options.actorName;
+  if (options.lineNotified === true) {
+    payload.line_notified = true;
+  }
 
-  const { data, error } = await supabase.from('sales').update(payload).eq('id', saleId).select('*').single();
+  let { data, error } = await supabase.from('sales').update(payload).eq('id', saleId).select('*').single();
+  if (error && isMissingColumnError(error)) {
+    const fallbackPayload = {
+      status: payload.status,
+      confirmed_at: payload.confirmed_at,
+      updated_at: payload.updated_at,
+    };
+    if (options.lineNotified === true) {
+      fallbackPayload.line_notified = true;
+    }
+    const retry = await supabase
+      .from('sales')
+      .update(fallbackPayload)
+      .eq('id', saleId)
+      .select('*')
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw error;
 
   await logEvent('sales_status_updated', {

@@ -196,13 +196,15 @@ async function handlePostback(event) {
   const data = event.postback && event.postback.data;
   if (!data) return null;
 
+  const normalizedData = String(data).trim();
+
   const actor = event.source && event.source.userId ? event.source.userId : null;
 
   // inspect_action|<inspectionId>|approve or problem
-  if (data.startsWith('inspect_action|')) {
-    const parts = data.split('|');
+  if (normalizedData.startsWith('inspect_action|')) {
+    const parts = normalizedData.split('|');
     const inspectionId = parts[1];
-    const action = parts[2];
+    const action = String(parts[2] || '').trim().toLowerCase();
     const replyTarget = getReplyTarget(event);
     const inspection = await fetchInspectionById(inspectionId);
 
@@ -287,10 +289,10 @@ async function handlePostback(event) {
   }
 
   // leave_action|<id>|approve
-  if (data.startsWith('leave_action|')) {
-    const parts = data.split('|');
+  if (normalizedData.startsWith('leave_action|')) {
+    const parts = normalizedData.split('|');
     const leaveId = parts[1];
-    const action = parts[2];
+    const action = String(parts[2] || '').trim().toLowerCase();
     const reviewer = await resolveReviewActor(event);
     const decidedAt = event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString();
 
@@ -352,10 +354,10 @@ async function handlePostback(event) {
   }
 
   // sales_action|<saleId>|approve or reject
-  if (data.startsWith('sales_action|')) {
-    const parts = data.split('|');
+  if (normalizedData.startsWith('sales_action|')) {
+    const parts = normalizedData.split('|');
     const saleId = parts[1];
-    const action = parts[2];
+    const action = String(parts[2] || '').trim().toLowerCase();
 
     const sale = await fetchSaleById(saleId);
     const replyTarget = getReplyTarget(event);
@@ -371,37 +373,71 @@ async function handlePostback(event) {
     if (sale.status === 'approved') {
       const approvedBy = String(sale.confirmed_by || sale.approved_by || 'ผู้จัดการ');
       const approvedAt = formatThaiDateTime(sale.confirmed_at || sale.updated_at);
+      const notification = approvedFlex({
+        saleId,
+        branchCode: getSaleBranchCode(sale),
+        total: sale.total_amount || 0,
+        approvedBy,
+        approvedAt
+      });
+
+      const messages = [notification, { type: 'text', text: 'รายการนี้อนุมัติไปแล้ว' }];
 
       await replyOrPush({
         ...replyTarget,
-        messages: [
-          approvedFlex({
-            saleId,
-            branchCode: getSaleBranchCode(sale),
-            total: sale.total_amount || 0,
-            approvedBy,
-            approvedAt
-          })
-        ]
+        messages,
       });
+
+      if (!sale.line_notified && sale.line_group_id) {
+        const groupId = sale.line_group_id;
+        const targetIsSameGroup = replyTarget.to === groupId;
+        if (!targetIsSameGroup) {
+          await replyOrPush({
+            to: groupId,
+            messages: [notification],
+          });
+        }
+        await supabase
+          .from('sales')
+          .update({ line_notified: true, updated_at: new Date().toISOString() })
+          .eq('id', saleId);
+      }
+
       return true;
     }
 
     if (sale.status === 'rejected') {
       const rejectedBy = String(sale.confirmed_by || sale.rejected_by || 'ผู้จัดการ');
       const rejectedAt = formatThaiDateTime(sale.confirmed_at || sale.updated_at);
+      const notification = rejectedFlex({
+        saleId,
+        branchCode: getSaleBranchCode(sale),
+        rejectedBy,
+        rejectedAt
+      });
+
+      const messages = [notification, { type: 'text', text: 'รายการนี้ถูกตีกลับไปแล้ว' }];
 
       await replyOrPush({
         ...replyTarget,
-        messages: [
-          rejectedFlex({
-            saleId,
-            branchCode: getSaleBranchCode(sale),
-            rejectedBy,
-            rejectedAt
-          })
-        ]
+        messages,
       });
+
+      if (!sale.line_notified && sale.line_group_id) {
+        const groupId = sale.line_group_id;
+        const targetIsSameGroup = replyTarget.to === groupId;
+        if (!targetIsSameGroup) {
+          await replyOrPush({
+            to: groupId,
+            messages: [notification],
+          });
+        }
+        await supabase
+          .from('sales')
+          .update({ line_notified: true, updated_at: new Date().toISOString() })
+          .eq('id', saleId);
+      }
+
       return true;
     }
 
@@ -412,11 +448,9 @@ async function handlePostback(event) {
     const total = sale.total_amount || 0;
 
     if (action === 'approve') {
-      await updateSaleStatusWithTimestamp(saleId, 'approved', {
+      const updatedSale = await updateSaleStatusWithTimestamp(saleId, 'approved', {
         confirmedByUsername: actorInfo.confirmedByUsername,
-        actorType: actorInfo.actorType,
-        actorId: actorInfo.actorId,
-        actorName: actorInfo.name,
+        lineNotified: Boolean(sale.line_group_id),
       });
       await logEvent('sales_approved_by_manager', {
         sale_id: saleId,
@@ -436,15 +470,27 @@ async function handlePostback(event) {
           })
         ]
       });
+      if (updatedSale && updatedSale.line_group_id) {
+        await replyOrPush({
+          to: updatedSale.line_group_id,
+          messages: [
+            approvedFlex({
+              saleId,
+              branchCode,
+              total,
+              approvedBy: actorName,
+              approvedAt: timestamp
+            })
+          ]
+        });
+      }
       return true;
     }
 
     if (action === 'reject') {
-      await updateSaleStatusWithTimestamp(saleId, 'rejected', {
+      const updatedSale = await updateSaleStatusWithTimestamp(saleId, 'rejected', {
         confirmedByUsername: actorInfo.confirmedByUsername,
-        actorType: actorInfo.actorType,
-        actorId: actorInfo.actorId,
-        actorName: actorInfo.name,
+        lineNotified: Boolean(sale.line_group_id),
       });
       await logEvent('sales_rejected_by_manager', {
         sale_id: saleId,
@@ -463,8 +509,27 @@ async function handlePostback(event) {
           })
         ]
       });
+      if (updatedSale && updatedSale.line_group_id) {
+        await replyOrPush({
+          to: updatedSale.line_group_id,
+          messages: [
+            rejectedFlex({
+              saleId,
+              branchCode,
+              rejectedBy: actorName,
+              rejectedAt: timestamp
+            })
+          ]
+        });
+      }
       return true;
     }
+
+    await replyOrPush({
+      ...replyTarget,
+      messages: [{ type: 'text', text: 'ไม่รู้จักคำสั่งอนุมัติยอดขายนี้ กรุณาลองกดปุ่มอีกครั้ง' }]
+    });
+    return true;
   }
 
   return null;

@@ -56,6 +56,7 @@ async function handle(event) {
     amount: parsed.amount,
     depositDate: parsed.depositDate,
     bank: parsed.bank,
+    bankShort: parsed.bankShort,
     branchId: branch.id,
     branchCode: branch.code,
     branchName: branch.name,
@@ -77,7 +78,7 @@ async function handle(event) {
     messages: [
       {
         type: 'text',
-        text: `บันทึกยอดฝาก ${Number(parsed.amount).toLocaleString()} บาท\nวันที่ ${parsed.depositDate}\nสาขา ${branch.code}${parsed.bank ? `\nธนาคาร: ${parsed.bank}` : ''}\nส่งรูปสลิป 1 รูปได้เลยครับ`,
+        text: `บันทึกยอดฝาก ${Number(parsed.amount).toLocaleString()} บาท\nวันที่ ${parsed.depositDate}\nสาขา ${branch.code}${parsed.bankShort ? `\nธนาคาร: ${parsed.bankShort}` : parsed.bank ? `\nธนาคาร: ${parsed.bank}` : ''}\nส่งรูปสลิป 1 รูปได้เลยครับ`,
         quickReply: {
           items: [
             {
@@ -125,6 +126,7 @@ async function handleImageMessage(event) {
     deposited_by: state.employeeId,
     deposited_amount: state.amount,
     bank: state.bank || null,
+    bank_short: state.bankShort || null,
     slip_url: slipUrl,
     source: 'line',
     line_group_id: state.lineGroupId,

@@ -4,6 +4,7 @@ const warningFlex = require('../flex/warningFlex');
 const payrollFlex = require('../flex/payrollFlex');
 const alertFlex = require('../flex/alertFlex');
 const leaveFlex = require('../flex/leaveFlex');
+const { approvedFlex, rejectedFlex, approvedSalesResultFlex } = require('../flex/salesFlex');
 
 let running = false;
 
@@ -214,11 +215,71 @@ async function sendLeaveResults() {
   }
 }
 
+function formatThaiDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString('th-TH');
+}
+
+function formatThaiDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('th-TH');
+}
+
+async function notifySalesResults() {
+  let { data, error } = await supabase
+    .from('sales')
+    .select('id,sell_date,confirmed_at,confirmed_by,approved_by,cash_amount,credit_amount,transfer_amount,total_amount,line_group_id,line_notified,branches(code,name)')
+    .eq('status', 'approved')
+    .not('line_group_id', 'is', null)
+    .or('line_notified.eq.false,line_notified.is.null')
+    .order('confirmed_at', { ascending: true });
+
+  if (error) {
+    console.warn('Sales notification job query failed:', error.message || error);
+    return;
+  }
+
+  for (const sale of data || []) {
+    const groupId = sale.line_group_id;
+    if (!groupId) continue;
+
+    const branchCode = sale.branches ? (sale.branches.code || sale.branches.name) : '-';
+    const saleDate = formatThaiDate(sale.sell_date || sale.confirmed_at);
+    const approvedBy = sale.confirmed_by || sale.approved_by || 'ผู้จัดการ';
+    const approvedAt = formatThaiDateTime(sale.confirmed_at);
+
+    const message = approvedSalesResultFlex({
+      saleId: sale.id,
+      branchCode,
+      saleDate,
+      total: sale.total_amount || 0,
+      cash: sale.cash_amount || 0,
+      credit: sale.credit_amount || 0,
+      transfer: sale.transfer_amount || 0,
+      approvedBy,
+      approvedAt,
+    });
+
+    try {
+      await push(groupId, message);
+      await supabase
+        .from('sales')
+        .update({ line_notified: true, updated_at: new Date().toISOString() })
+        .eq('id', sale.id);
+    } catch (sendError) {
+      console.warn('Sales approval notification failed:', sendError.message || sendError, { sale_id: sale.id, groupId });
+    }
+  }
+}
+
 async function runLineJobs(date = new Date()) {
   if (running) return;
   running = true;
   try {
     await sendLeaveResults();
+    await notifySalesResults();
     await sendTodayWarningLetters(date);
     await sendTodayAttendanceAlerts(date);
     await sendMonthEndPayroll(date);
@@ -235,4 +296,5 @@ module.exports = {
   sendTodayWarningLetters,
   sendTodayAttendanceAlerts,
   sendMonthEndPayroll,
+  notifySalesResults,
 };
