@@ -230,8 +230,8 @@ function formatThaiDateTime(value) {
 async function notifySalesResults() {
   let { data, error } = await supabase
     .from('sales')
-    .select('id,sell_date,confirmed_at,confirmed_by,approved_by,cash_amount,credit_amount,transfer_amount,total_amount,line_group_id,line_notified,branches(code,name)')
-    .eq('status', 'approved')
+    .select('id,sell_date,confirmed_at,confirmed_by,cash_amount,credit_amount,transfer_amount,total_amount,line_group_id,line_notified,branches(code,name)')
+.eq('status', 'confirmed')
     .not('line_group_id', 'is', null)
     .or('line_notified.eq.false,line_notified.is.null')
     .order('confirmed_at', { ascending: true });
@@ -247,7 +247,7 @@ async function notifySalesResults() {
 
     const branchCode = sale.branches ? (sale.branches.code || sale.branches.name) : '-';
     const saleDate = formatThaiDate(sale.sell_date || sale.confirmed_at);
-    const approvedBy = sale.confirmed_by || sale.approved_by || 'ผู้จัดการ';
+    const approvedBy = sale.confirmed_by || 'ผู้จัดการ';
     const approvedAt = formatThaiDateTime(sale.confirmed_at);
 
     const message = approvedSalesResultFlex({
