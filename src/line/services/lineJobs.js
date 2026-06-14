@@ -175,7 +175,7 @@ async function sendMonthEndPayroll(date = new Date()) {
 async function sendLeaveResults() {
   const { data, error } = await supabase
     .from('leaves')
-    .select('id,leave_type,start_date,end_date,status,manager_note,line_user_id,decided_by,employees(name,nickname,line_user_id)')
+    .select('id,leave_type,start_date,end_date,status,line_user_id,decided_by,employees(name,nickname,line_user_id)')
     .in('status', ['approved', 'rejected'])
     .is('line_notified', false)
     .order('updated_at', { ascending: true });
@@ -200,7 +200,6 @@ async function sendLeaveResults() {
       to: leave.end_date,
       status: leave.status,
       approvedBy: leave.decided_by || 'ผู้จัดการ',
-      managerNote: leave.manager_note,
     });
 
     try {
