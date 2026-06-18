@@ -2,6 +2,7 @@ const openHandler = require('./flows/open/handler');
 const inspectHandler = require('./flows/inspect/handler');
 const registerHandler = require('./flows/register/handler');
 const { handleTextMessage, handleImageMessage, handleUploadPrompt, handleEditFlow } = require('./flows/sales/handler');
+const { getFlowState, FLOW_STATES } = require('./flows/sales/state');
 const depositHandler = require('./flows/deposit/handler');
 const { getDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
 const commandFlex = require('./flex/commandFlex');
@@ -61,6 +62,14 @@ async function handleEvent(event) {
       if (depositState && depositState.status === DEPOSIT_STATUS.AWAITING_SLIP) {
         return depositHandler.handleImageMessage(event);
       }
+      if (openHandler.hasActiveOpenImageRequest(event)) {
+        return openHandler.handleImageMessage(event);
+      }
+      const salesState = lineUserId ? getFlowState(lineUserId) : null;
+      if (salesState && salesState.status === FLOW_STATES.AWAITING_IMAGES) {
+        return handleImageMessage(event);
+      }
+      await openHandler.handleImageMessage(event);
       return handleImageMessage(event);
     }
 
@@ -128,6 +137,16 @@ async function handleEvent(event) {
     if (lower === 'ตรวจเสร็จ' || lower === 'ยืนยันส่ง') {
       console.log('🔍 Routing to active inspect flow');
       return inspectHandler.handle(event);
+    }
+
+    if (
+      getScopedStateKeys(event.source || {}).some((key) => hasInspectionState(key)) &&
+      (lower.includes('ส่งรูป') || lower.includes('อัพรูป') || lower.includes('อัปโหลดรูป'))
+    ) {
+      return replyOrPush({
+        replyToken: event.replyToken,
+        messages: [{ type: 'text', text: 'ส่งรูปตรวจร้านในแชทนี้ได้เลย เมื่อครบแล้วพิมพ์ “ตรวจเสร็จ”' }],
+      });
     }
 
 if (

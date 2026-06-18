@@ -1,4 +1,5 @@
 const { supabase } = require('../../../../backend/config/supabase');
+const { blobClient } = require('../../../../backend/config/line');
 
 function isMissingColumnError(error) {
   const message = `${error && error.message || ''} ${error && error.details || ''}`;
@@ -9,6 +10,7 @@ async function recordOpen({
   employeeId,
   branchId,
   messageId,
+  imageMessageId,
   hasImage,
   timestamp,
   rawText,
@@ -21,10 +23,12 @@ async function recordOpen({
   messageText,
   submittedAt,
 }) {
+  let inspectionRecord = null;
+  let attachment = null;
   const record = {
     employee_id: employeeId || null,
     branch_id: branchId || null,
-    message_id: messageId || null,
+    message_id: imageMessageId || messageId || null,
     has_image: hasImage ? true : false,
     raw_text: rawText || null,
     opened_at: timestamp || new Date().toISOString(),
@@ -63,19 +67,28 @@ async function recordOpen({
 
   if (branchId) {
     try {
-      await upsertStoreInspectionOpen({
+      inspectionRecord = await upsertStoreInspectionOpen({
         employeeId,
         branchId,
         workDate,
         clockIn,
         lateBy,
         hasImage,
+        messageId: imageMessageId || messageId,
         source,
         lineGroupId,
         lineUserId,
         messageText: messageText || rawText,
         submittedAt: submittedAt || timestamp,
       });
+
+      if (hasImage && (imageMessageId || messageId) && inspectionRecord && inspectionRecord.id) {
+        attachment = await uploadOpenAttachment({
+          inspectionId: inspectionRecord.id,
+          messageId: imageMessageId || messageId,
+          inspectionItems: inspectionRecord.inspection_items,
+        });
+      }
     } catch (err) {
       console.warn('Unable to update store inspection opening:', err.message || err);
     }
@@ -98,7 +111,11 @@ async function recordOpen({
     // ignore
   }
 
-  return record;
+  return {
+    ...record,
+    inspection_id: inspectionRecord ? inspectionRecord.id : null,
+    attachment_url: attachment ? attachment.file_url : null,
+  };
 }
 
 async function upsertStoreInspectionOpen({
@@ -108,6 +125,7 @@ async function upsertStoreInspectionOpen({
   clockIn,
   lateBy,
   hasImage,
+  messageId,
   source,
   lineGroupId,
   lineUserId,
@@ -117,9 +135,11 @@ async function upsertStoreInspectionOpen({
   const payload = {
     submitted_by: employeeId || null,
     submit_time: clockIn,
-    status: 'pass',
+    status: 'opened',
     inspection_items: {
       open_shop: true,
+      shopfront_image: hasImage ? true : false,
+      open_photo_message_id: messageId || null,
       source: source || 'line',
       message_text: messageText || null,
     },
@@ -135,7 +155,7 @@ async function upsertStoreInspectionOpen({
 
   const { data: existing, error: selectError } = await supabase
     .from('store_inspections')
-    .select('id')
+    .select('id,inspection_items')
     .eq('branch_id', branchId)
     .eq('work_date', workDate)
     .order('created_at', { ascending: false })
@@ -145,17 +165,28 @@ async function upsertStoreInspectionOpen({
   if (selectError) throw selectError;
 
   if (existing) {
+    const existingItems = existing.inspection_items && typeof existing.inspection_items === 'object'
+      ? existing.inspection_items
+      : {};
+    const updatePayload = {
+      ...payload,
+      inspection_items: {
+        ...existingItems,
+        ...payload.inspection_items,
+      },
+    };
+
     let { error } = await supabase
       .from('store_inspections')
-      .update(payload)
+      .update(updatePayload)
       .eq('id', existing.id);
 
     if (error && isMissingColumnError(error)) {
       const fallbackPayload = {
         submitted_by: employeeId || null,
         submit_time: clockIn,
-        status: 'pass',
-        inspection_items: payload.inspection_items,
+        status: 'opened',
+        inspection_items: updatePayload.inspection_items,
         photo_count: hasImage ? 1 : 0,
         is_late: Boolean(lateBy && lateBy > 0),
         late_minutes: lateBy || 0,
@@ -168,7 +199,7 @@ async function upsertStoreInspectionOpen({
     }
 
     if (error) throw error;
-    return existing;
+    return { ...existing, inspection_items: updatePayload.inspection_items };
   }
 
   let { data, error } = await supabase
@@ -189,7 +220,7 @@ async function upsertStoreInspectionOpen({
         work_date: workDate,
         submitted_by: employeeId || null,
         submit_time: clockIn,
-        status: 'pass',
+        status: 'opened',
         inspection_items: payload.inspection_items,
         photo_count: hasImage ? 1 : 0,
         is_late: Boolean(lateBy && lateBy > 0),
@@ -205,6 +236,72 @@ async function upsertStoreInspectionOpen({
   return data;
 }
 
+async function uploadOpenAttachment({ inspectionId, messageId, inspectionItems }) {
+  const contentResponse = await blobClient.getMessageContent(messageId);
+  const chunks = [];
+  for await (const chunk of contentResponse) {
+    chunks.push(chunk);
+  }
+
+  const buffer = Buffer.concat(chunks);
+  const fileName = `open_shop_${messageId}.jpg`;
+  const storagePath = `open/${inspectionId}/${Date.now()}_${fileName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('documents')
+    .upload(storagePath, buffer, {
+      contentType: 'image/jpeg',
+      cacheControl: '3600',
+      upsert: false,
+    });
+
+  if (uploadError) throw uploadError;
+
+  const { data: publicUrlData } = supabase.storage
+    .from('documents')
+    .getPublicUrl(storagePath);
+
+  const publicUrl = publicUrlData.publicUrl;
+  const { data, error } = await supabase
+    .from('attachments')
+    .insert([{
+      entity_type: 'store_inspection',
+      entity_id: inspectionId,
+      file_url: publicUrl,
+      storage_bucket: 'documents',
+      storage_path: storagePath,
+      file_name: fileName,
+      file_type: 'image/jpeg',
+      file_size: buffer.byteLength,
+    }])
+    .select('*')
+    .single();
+
+  if (error) throw error;
+
+  try {
+    const items = inspectionItems && typeof inspectionItems === 'object' ? inspectionItems : {};
+    await supabase
+      .from('store_inspections')
+      .update({
+        inspection_items: {
+          ...items,
+          open_shop: true,
+          shopfront_image: true,
+          open_photo_message_id: messageId,
+          open_photo_url: publicUrl,
+        },
+        photo_count: 1,
+      })
+      .eq('id', inspectionId);
+  } catch (err) {
+    console.warn('Unable to update opening photo metadata:', err.message || err);
+  }
+
+  return data;
+}
+
 module.exports = {
   recordOpen,
+  uploadOpenAttachment,
 };

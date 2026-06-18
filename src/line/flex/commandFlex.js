@@ -4,13 +4,14 @@ function commandFlex() {
     altText: 'คำสั่ง Cruzy Bot',
     contents: {
       type: 'bubble',
+      size: 'mega',
       header: {
         type: 'box',
         layout: 'vertical',
         backgroundColor: '#111827',
         paddingAll: 'lg',
         contents: [
-          { type: 'text', text: 'คำสั่ง Cruzy Bot', color: '#FFFFFF', weight: 'bold', size: 'lg' },
+          { type: 'text', text: 'คำสั่ง Cruzy Bot', color: '#FFFFFF', weight: 'bold', size: 'xl' },
           { type: 'text', text: 'ใช้ในกลุ่มสาขาและไลน์ส่วนตัว', color: '#CBD5E1', size: 'xs', margin: 'xs' },
         ],
       },
@@ -19,6 +20,7 @@ function commandFlex() {
         layout: 'vertical',
         spacing: 'md',
         backgroundColor: '#F8FAFC',
+        paddingAll: 'lg',
         contents: [
           section('ใช้ในกลุ่มสาขา', [
             'ยอดขาย CCA ...',
@@ -50,8 +52,17 @@ function section(title, items) {
     paddingAll: 'md',
     spacing: 'sm',
     contents: [
-      { type: 'text', text: title, color: '#0F172A', weight: 'bold', size: 'sm' },
-      ...items.map((item) => ({ type: 'text', text: item, color: '#475569', size: 'xs', wrap: true })),
+      { type: 'text', text: title, color: '#0F172A', weight: 'bold', size: 'md' },
+      ...items.map((item) => ({
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#F8FAFC',
+        borderColor: '#E2E8F0',
+        borderWidth: '1px',
+        cornerRadius: 'md',
+        paddingAll: 'sm',
+        contents: [{ type: 'text', text: item, color: '#334155', size: 'xs', wrap: true }],
+      })),
     ],
   };
 }

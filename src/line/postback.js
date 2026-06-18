@@ -4,14 +4,13 @@ const { updateLeaveStatus } = require('./flows/leave/service');
 const { updateSaleStatusWithTimestamp } = require('./flows/sales/service');
 const { replyOrPush } = require('./reply');
 const { logEvent } = require('./utils/audit');
-const { approvedFlex, rejectedFlex } = require('./flex/salesFlex');
-const leaveFlex = require('./flex/leaveFlex');
 const depositFlex = require('./flex/depositFlex');
 const { resolveLineActor } = require('./utils/actor');
 const { fetchInspectionById, updateInspectionReview } = require('./flows/inspect/service');
-const { inspectionPendingFlex, inspectionResultFlex } = require('./flex/inspectFlex');
+const { inspectionPendingFlex } = require('./flex/inspectFlex');
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
 const { recordDeposit } = require('./flows/deposit/service');
+const { getDisplayName } = require('./utils/displayName');
 
 async function fetchSaleById(saleId) {
   const { data, error } = await supabase
@@ -97,24 +96,24 @@ async function fetchMatchingUsername(employee) {
 async function resolveApprovalActor(event) {
   const source = event.source || {};
   const lineUserId = source.userId || null;
-  let displayName = 'ผู้จัดการ';
+  let profileName = null;
   let actor = null;
   let employee = null;
 
   if (!lineUserId) {
-    return { lineUserId, displayName, confirmedByUsername: null };
+    return { lineUserId, displayName: '-', confirmedByUsername: null };
   }
 
   try {
     if (source.groupId) {
       const profile = await lineClient.getGroupMemberProfile(source.groupId, lineUserId);
-      if (profile && profile.displayName) displayName = profile.displayName;
+      if (profile && profile.displayName) profileName = profile.displayName;
     } else if (source.roomId) {
       const profile = await lineClient.getRoomMemberProfile(source.roomId, lineUserId);
-      if (profile && profile.displayName) displayName = profile.displayName;
+      if (profile && profile.displayName) profileName = profile.displayName;
     } else {
       const profile = await lineClient.getProfile(lineUserId);
-      if (profile && profile.displayName) displayName = profile.displayName;
+      if (profile && profile.displayName) profileName = profile.displayName;
     }
   } catch (profileError) {
     console.warn('Unable to fetch LINE profile for approval actor:', lineUserId, profileError.message || profileError);
@@ -123,21 +122,19 @@ async function resolveApprovalActor(event) {
   try {
     actor = await resolveLineActor(lineUserId);
     employee = actor && actor.employee ? actor.employee : null;
-    if (displayName === 'ผู้จัดการ' && actor && actor.name) {
-      displayName = actor.name;
-    }
   } catch (actorError) {
     console.warn('Unable to resolve approval actor:', lineUserId, actorError.message || actorError);
   }
 
   const confirmedByUsername = await fetchMatchingUsername(employee);
+  const displayName = getDisplayName(employee, actor && actor.user, profileName, lineUserId);
   return {
     lineUserId,
     displayName,
     confirmedByUsername: actor && actor.user ? actor.user.username : confirmedByUsername,
     actorType: actor && actor.user && actor.employeeResolvedBy === 'user_identity' ? 'user' : actor && actor.type,
     actorId: actor && actor.user && actor.employeeResolvedBy === 'user_identity' ? actor.user.id : actor && actor.id,
-    name: actor && actor.name ? actor.name : displayName,
+    name: displayName,
   };
 }
 
@@ -155,9 +152,9 @@ function formatBangkokTime(dateValue) {
 async function resolveReviewActor(event) {
   const source = event.source || {};
   const lineUserId = source.userId || null;
-  if (!lineUserId) return { actorType: 'line', actorId: null, name: 'ผู้จัดการ', username: null };
+  if (!lineUserId) return { actorType: 'line', actorId: null, name: '-', username: null };
 
-  let name = 'ผู้จัดการ';
+  let profileName = null;
   try {
     const actor = await resolveLineActor(lineUserId);
     if (actor && actor.type) {
@@ -167,7 +164,7 @@ async function resolveReviewActor(event) {
       return {
         actorType,
         actorId,
-        name: actor.name,
+        name: getDisplayName(actor.employee, actor.user, actor.name, lineUserId),
         username,
       };
     }
@@ -178,10 +175,10 @@ async function resolveReviewActor(event) {
   try {
     if (source.groupId) {
       const profile = await lineClient.getGroupMemberProfile(source.groupId, lineUserId);
-      if (profile && profile.displayName) name = profile.displayName;
+      if (profile && profile.displayName) profileName = profile.displayName;
     } else {
       const profile = await lineClient.getProfile(lineUserId);
-      if (profile && profile.displayName) name = profile.displayName;
+      if (profile && profile.displayName) profileName = profile.displayName;
     }
   } catch (err) {
     console.warn('Unable to fetch reviewer profile:', err.message || err);
@@ -190,7 +187,7 @@ async function resolveReviewActor(event) {
   return {
     actorType: 'line',
     actorId: lineUserId,
-    name,
+    name: getDisplayName(profileName, lineUserId),
     username: null,
   };
 }
@@ -217,21 +214,12 @@ async function handlePostback(event) {
     }
 
     const branchCode = inspection.branches ? inspection.branches.code : inspection.branch_id;
-    const submitterName = inspection.employees
-      ? (inspection.employees.nickname || inspection.employees.name)
-      : (inspection.line_user_id || 'ไม่ระบุ');
+    const submitterName = getDisplayName(inspection.employees, inspection.line_user_id);
 
     if (inspection.status === 'pass' || inspection.status === 'issue') {
       await replyOrPush({
         ...replyTarget,
-        messages: [inspectionResultFlex({
-          inspectionId,
-          branchCode,
-          status: inspection.status,
-          reviewedBy: inspection.reviewed_by,
-          reviewTime: inspection.review_time,
-          managerNote: inspection.manager_note,
-        })],
+        messages: [{ type: 'text', text: 'รายการนี้บันทึกผลแล้ว ระบบจะส่งแจ้งผลในกลุ่มอัตโนมัติ' }],
       });
       return true;
     }
@@ -258,7 +246,7 @@ async function handlePostback(event) {
     const updated = await updateInspectionReview({
       inspectionId,
       status,
-      reviewedBy: reviewer.username || reviewer.name,
+      reviewedBy: getDisplayName(reviewer.name, reviewer.username),
       reviewTime,
       managerNote,
       actorType: reviewer.actorType,
@@ -271,23 +259,11 @@ async function handlePostback(event) {
       branch_id: updated.branch_id,
       actor,
       actor_name: reviewer.name,
-      reviewed_by: reviewer.username || reviewer.name,
+      reviewed_by: getDisplayName(reviewer.name, reviewer.username),
       status,
     });
 
-    const resultFlex = inspectionResultFlex({
-      inspectionId,
-      branchCode,
-      status,
-      reviewedBy: reviewer.name,
-      reviewTime,
-      managerNote,
-    });
-
-    await replyOrPush({ ...replyTarget, messages: [resultFlex] });
-    if (updated.employees && updated.employees.line_user_id) {
-      await replyOrPush({ to: updated.employees.line_user_id, messages: [resultFlex] });
-    }
+    await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'บันทึกผลตรวจร้านแล้ว ระบบจะส่งแจ้งผลในกลุ่มอัตโนมัติ' }] });
     return true;
   }
 
@@ -300,58 +276,30 @@ async function handlePostback(event) {
     const decidedAt = event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString();
 
     if (action === 'approve') {
-      const leave = await updateLeaveStatus(leaveId, 'approved', actor, {
-        decidedBy: reviewer.username || reviewer.name,
-        editedBy: reviewer.username || reviewer.name,
+      await updateLeaveStatus(leaveId, 'approved', actor, {
+        decidedBy: getDisplayName(reviewer.name, reviewer.username),
+        editedBy: getDisplayName(reviewer.name, reviewer.username),
         decidedAt,
         actorType: reviewer.actorType,
         actorId: reviewer.actorId,
         actorName: reviewer.name,
       });
       await logEvent('leave_approved', { leaveId, actor });
-      const resultFlex = leaveFlex({
-        id: leave.id,
-        employeeName: leave.employees ? (leave.employees.nickname || leave.employees.name) : '-',
-        branchCode: leave.branches ? leave.branches.code : '-',
-        type: leave.leave_type,
-        from: leave.start_date,
-        to: leave.end_date,
-        daysCount: leave.days_count,
-        reason: leave.reason,
-        status: 'approved',
-        approvedBy: reviewer.name,
-      });
-      if (leave.employees && leave.employees.line_user_id) {
-        await replyOrPush({ to: leave.employees.line_user_id, messages: [resultFlex] });
-      }
+      await replyOrPush({ ...getReplyTarget(event), messages: [{ type: 'text', text: 'บันทึกอนุมัติวันลาแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }] });
       return true;
     }
 
     if (action === 'reject') {
-      const leave = await updateLeaveStatus(leaveId, 'rejected', actor, {
-        decidedBy: reviewer.username || reviewer.name,
-        editedBy: reviewer.username || reviewer.name,
+      await updateLeaveStatus(leaveId, 'rejected', actor, {
+        decidedBy: getDisplayName(reviewer.name, reviewer.username),
+        editedBy: getDisplayName(reviewer.name, reviewer.username),
         decidedAt,
         actorType: reviewer.actorType,
         actorId: reviewer.actorId,
         actorName: reviewer.name,
       });
       await logEvent('leave_rejected', { leaveId, actor });
-      const resultFlex = leaveFlex({
-        id: leave.id,
-        employeeName: leave.employees ? (leave.employees.nickname || leave.employees.name) : '-',
-        branchCode: leave.branches ? leave.branches.code : '-',
-        type: leave.leave_type,
-        from: leave.start_date,
-        to: leave.end_date,
-        daysCount: leave.days_count,
-        reason: leave.reason,
-        status: 'rejected',
-        approvedBy: reviewer.name,
-      });
-      if (leave.employees && leave.employees.line_user_id) {
-        await replyOrPush({ to: leave.employees.line_user_id, messages: [resultFlex] });
-      }
+      await replyOrPush({ ...getReplyTarget(event), messages: [{ type: 'text', text: 'บันทึกไม่อนุมัติวันลาแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }] });
       return true;
     }
   }
@@ -528,7 +476,6 @@ async function handlePostback(event) {
 
     const actorInfo = await resolveApprovalActor(event);
     const actorName = actorInfo.displayName;
-    const timestamp = formatThaiDateTime(new Date());
 
     if (action === 'approve') {
       const payload = {
@@ -618,14 +565,10 @@ async function handlePostback(event) {
 
     const actorInfo = await resolveApprovalActor(event);
     const actorName = actorInfo.displayName;
-    const timestamp = formatThaiDateTime(new Date());
-    const branchCode = getSaleBranchCode(sale);
-    const total = sale.total_amount || 0;
-
     if (action === 'approve') {
-      const updatedSale = await updateSaleStatusWithTimestamp(saleId, 'confirmed', {
+      await updateSaleStatusWithTimestamp(saleId, 'confirmed', {
         confirmedByUsername: actorInfo.confirmedByUsername,
-        lineNotified: Boolean(sale.line_group_id),
+        lineNotified: false,
       });
       await logEvent('sales_approved_by_manager', {
         sale_id: saleId,
@@ -638,9 +581,9 @@ async function handlePostback(event) {
     }
 
     if (action === 'reject') {
-      const updatedSale = await updateSaleStatusWithTimestamp(saleId, 'rejected', {
+      await updateSaleStatusWithTimestamp(saleId, 'rejected', {
         confirmedByUsername: actorInfo.confirmedByUsername,
-        lineNotified: Boolean(sale.line_group_id),
+        lineNotified: false,
       });
       await logEvent('sales_rejected_by_manager', {
         sale_id: saleId,

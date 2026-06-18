@@ -77,8 +77,8 @@ async function updateSaleStatusWithTimestamp(saleId, status, options = {}) {
     payload.confirmed_by = options.confirmedByUsername;
   }
 
-  if (options.lineNotified === true) {
-    payload.line_notified = true;
+  if (typeof options.lineNotified === 'boolean') {
+    payload.line_notified = options.lineNotified;
   }
 
   let { data, error } = await supabase.from('sales').update(payload).eq('id', saleId).select('*').single();
@@ -88,8 +88,8 @@ async function updateSaleStatusWithTimestamp(saleId, status, options = {}) {
       confirmed_at: payload.confirmed_at,
       updated_at: payload.updated_at,
     };
-    if (options.lineNotified === true) {
-      fallbackPayload.line_notified = true;
+    if (typeof options.lineNotified === 'boolean') {
+      fallbackPayload.line_notified = options.lineNotified;
     }
     const retry = await supabase
       .from('sales')

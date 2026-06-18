@@ -4,6 +4,7 @@ const { replyOrPush } = require('../../reply');
 const { logEvent } = require('../../utils/audit');
 const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
+const { getDisplayName } = require('../../utils/displayName');
 const {
   parseDateFromText,
   parseTimeFromText,
@@ -24,6 +25,7 @@ async function handle(event) {
   const lineUserId = source.userId || null;
   const actorInfo = lineUserId ? await resolveLineActor(lineUserId) : null;
   const employee = actorInfo && actorInfo.employee ? actorInfo.employee : null;
+  const actorName = getDisplayName(employee, actorInfo && actorInfo.user, actorInfo && actorInfo.name, lineUserId);
   const eventTime = event.timestamp ? new Date(event.timestamp) : new Date();
   const workDate = parseDateFromText(text, eventTime);
 
@@ -105,7 +107,7 @@ async function handle(event) {
         branchId: branch.id,
         workDate,
         title: 'ปิดร้านก่อนเวลา',
-        detail: `${employee.nickname || employee.name} ปิดร้านเวลา ${clockOut.slice(0, 5)} ก่อนเวลา ${closedEarlyBy} นาที (เวลาปิด ${schedule.shiftEnd.slice(0, 5)})`,
+        detail: `${getDisplayName(employee)} ปิดร้านเวลา ${clockOut.slice(0, 5)} ก่อนเวลา ${closedEarlyBy} นาที (เวลาปิด ${schedule.shiftEnd.slice(0, 5)})`,
         severity: 'warning',
         alertTime: clockOut,
       });
@@ -130,7 +132,7 @@ async function handle(event) {
     actor: employee ? employee.id : lineUserId,
     actorType: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? 'user' : actorInfo && actorInfo.type,
     actorId: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? actorInfo.user.id : actorInfo && actorInfo.id,
-    actorName: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? actorInfo.user.name : actorInfo && actorInfo.name,
+    actorName,
     branch_id: branch.id,
     branch_code: branch.code,
     reported_at: eventTime.toISOString(),
@@ -141,7 +143,7 @@ async function handle(event) {
     replyToken: event.replyToken,
     messages: [closeFlex({
       branchCode: branch.code,
-      employeeName: actorInfo && actorInfo.name ? actorInfo.name : employee ? (employee.nickname || employee.name) : 'ไม่ระบุ',
+      employeeName: actorName,
       time: `${workDate} ${clockOut.slice(0, 5)}`,
       expectedTime: schedule.shiftEnd,
       closedEarlyBy,

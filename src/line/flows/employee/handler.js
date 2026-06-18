@@ -4,6 +4,7 @@ const warningFlex = require('../../flex/warningFlex');
 const alertFlex = require('../../flex/alertFlex');
 const { replyOrPush } = require('../../reply');
 const { resolveLineActor } = require('../../utils/actor');
+const { getDisplayName } = require('../../utils/displayName');
 
 async function findEmployee(event) {
   const lineUserId = event.source && event.source.userId;
@@ -37,7 +38,7 @@ async function handlePayroll(event) {
   await replyOrPush({
     replyToken: event.replyToken,
     messages: [payrollFlex({
-      employeeName: employee.nickname || employee.name,
+      employeeName: getDisplayName(employee),
       gross,
       allowance,
       deductions,
@@ -71,7 +72,7 @@ async function handleWarning(event) {
     replyToken: event.replyToken,
     messages: [warningFlex({
       id: data.id,
-      employeeName: employee.nickname || employee.name,
+      employeeName: getDisplayName(employee),
       level: data.level,
       issueDate: data.issue_date,
       note: data.reason,

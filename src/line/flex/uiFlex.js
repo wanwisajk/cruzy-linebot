@@ -1,22 +1,22 @@
 const COLORS = {
-  ink: '#0F172A',
+  ink: '#1E293B',
   muted: '#64748B',
-  border: '#E2E8F0',
+  border: '#F1F5F9',
   surface: '#F8FAFC',
   white: '#FFFFFF',
-  success: '#16A34A',
-  danger: '#DC2626',
-  warning: '#D97706',
-  info: '#2563EB',
-  teal: '#0F766E',
+  success: '#10B981',
+  danger: '#F43F5E',
+  warning: '#F59E0B',
+  info: '#3B82F6',
+  teal: '#0D9488',
 };
 
 function row(label, value, color = COLORS.ink) {
   return {
     type: 'box',
-    layout: 'horizontal',
+    layout: 'baseline',
     contents: [
-      { type: 'text', text: label, color: COLORS.muted, size: 'sm', flex: 4, wrap: true },
+      { type: 'text', text: label, color: COLORS.muted, size: 'xs', flex: 4, wrap: true },
       { type: 'text', text: String(value || '-'), color, size: 'sm', weight: 'bold', align: 'end', flex: 6, wrap: true },
     ],
   };
@@ -28,10 +28,10 @@ function card(contents, options = {}) {
     layout: 'vertical',
     backgroundColor: options.backgroundColor || COLORS.white,
     borderColor: options.borderColor || COLORS.border,
-    borderWidth: '1px',
-    cornerRadius: 'md',
-    paddingAll: 'md',
-    spacing: 'sm',
+    borderWidth: options.borderColor ? '1px' : '0px',
+    cornerRadius: 'xl',
+    paddingAll: options.paddingAll || 'lg',
+    spacing: options.spacing || 'md',
     margin: options.margin,
     contents,
   };
@@ -39,58 +39,88 @@ function card(contents, options = {}) {
 
 function totalCard(label, value, color = COLORS.teal) {
   return card([
-    { type: 'text', text: label, color, size: 'xs', weight: 'bold' },
-    { type: 'text', text: String(value || '-'), align: 'end', weight: 'bold', size: 'xl', color, margin: 'xs' },
-  ], { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0', margin: 'sm' });
+    { type: 'text', text: label, color: COLORS.muted, size: 'xs', weight: 'bold' }, 
+    { type: 'text', text: String(value || '-'), align: 'end', weight: 'bold', size: 'xxl', color, margin: 'xs' },
+  ], { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7', margin: 'md' });
 }
-
 function bubble({ title, subtitle, color = COLORS.ink, body = [], footer, altText }) {
   return {
     type: 'flex',
     altText: altText || title || 'แจ้งเตือน',
     contents: {
       type: 'bubble',
+      size: 'mega',
       header: {
         type: 'box',
         layout: 'vertical',
         backgroundColor: color,
-        paddingAll: 'lg',
+        paddingAll: 'xl',
         contents: [
-          { type: 'text', text: title || 'แจ้งเตือน', color: COLORS.white, weight: 'bold', size: 'lg', wrap: true },
-          subtitle ? { type: 'text', text: subtitle, color: '#E0F2FE', size: 'xs', margin: 'xs', wrap: true } : null,
+          { type: 'text', text: title || 'แจ้งเตือน', color: COLORS.white, weight: 'bold', size: 'xl', wrap: true },
+          // แก้ไขตรงนี้: เอา alpha: '80%' ออก แล้วใช้สีขาวงาช้างหรือสีเทาอ่อนที่ปลอดภัย เช่น #F1F5F9 แทน เพื่อให้ดูซอฟต์ลง
+          subtitle ? { type: 'text', text: subtitle, color: '#F1F5F9', size: 'xs', margin: 'xs', wrap: true } : null,
         ].filter(Boolean),
       },
       body: {
         type: 'box',
         layout: 'vertical',
-        spacing: 'sm',
+        spacing: 'lg',
         backgroundColor: COLORS.surface,
+        paddingAll: 'xl',
         contents: body,
       },
-      footer,
+      footer: footer ? {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'sm',
+        backgroundColor: COLORS.white,
+        paddingAll: 'lg',
+        contents: Array.isArray(footer.contents) ? footer.contents : [footer],
+      } : undefined,
     },
   };
 }
 
 function primaryButton(label, action, color = COLORS.success) {
-  return { type: 'button', style: 'primary', color, action };
+  return { type: 'button', style: 'primary', color, action, height: 'sm', flex: 1 };
 }
 
 function secondaryButton(label, action) {
-  return { type: 'button', style: 'secondary', action };
+  return { 
+    type: 'button', 
+    style: 'secondary', 
+    color: COLORS.ink, 
+    action, 
+    height: 'sm', 
+    flex: 1
+  };
 }
 
 function resultFlex({ title, subtitle, statusLabel, statusColor, rows, altText, footer }) {
+  const statusBadge = {
+    type: 'box',
+    layout: 'horizontal',
+    align: 'center',
+    justifyContent: 'center',
+    backgroundColor: statusColor === COLORS.success || statusColor === '#16A34A' || statusColor === '#10B981' ? '#E6F4EA' : '#FCE8E6',
+    paddingAll: 'sm',
+    cornerRadius: 'md',
+    margin: 'md',
+    contents: [
+      { type: 'text', text: statusLabel || 'ดำเนินการเสร็จสิ้น', color: statusColor, weight: 'bold', size: 'sm', align: 'center' }
+    ]
+  };
+
   return bubble({
     title,
     subtitle,
     color: statusColor,
     altText,
     body: [
+      statusBadge,
       card([
         ...(rows || []),
-        row('สถานะ', statusLabel, statusColor),
-      ]),
+      ], { backgroundColor: COLORS.white, margin: 'xs' }),
     ],
     footer,
   });

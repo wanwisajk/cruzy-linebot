@@ -1,4 +1,5 @@
 const { supabase } = require('../../../backend/config/supabase');
+const { getDisplayName } = require('./displayName');
 
 function pad(value) {
   return String(value).padStart(2, '0');
@@ -157,9 +158,7 @@ async function createAbsenceAlertsForBranchDay({ branchId, workDate }) {
 
     if (attendance && attendance.clock_in) continue;
 
-    const name = schedule.employees
-      ? (schedule.employees.nickname || schedule.employees.name)
-      : `พนักงาน ${schedule.employee_id}`;
+    const name = getDisplayName(schedule.employees, `พนักงาน ${schedule.employee_id}`);
 
     const alert = await ensureAttendanceAlert({
       alertType: 'absent',

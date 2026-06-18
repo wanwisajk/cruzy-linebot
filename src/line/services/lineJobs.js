@@ -4,8 +4,10 @@ const warningFlex = require('../flex/warningFlex');
 const payrollFlex = require('../flex/payrollFlex');
 const alertFlex = require('../flex/alertFlex');
 const leaveFlex = require('../flex/leaveFlex');
-const { approvedFlex, rejectedFlex, approvedSalesResultFlex } = require('../flex/salesFlex');
+const { approvedSalesResultFlex } = require('../flex/salesFlex');
 const depositFlex = require('../flex/depositFlex');
+const { inspectionResultFlex } = require('../flex/inspectFlex');
+const { getDisplayName } = require('../utils/displayName');
 
 let running = false;
 
@@ -27,6 +29,23 @@ function isLastDayOfMonth(date = new Date()) {
 
 async function push(to, message) {
   return lineClient.pushMessage({ to, messages: [message] });
+}
+
+async function countAttachments(entityType, entityId) {
+  if (!entityType || !entityId) return 0;
+
+  const { count, error } = await supabase
+    .from('attachments')
+    .select('id', { count: 'exact', head: true })
+    .eq('entity_type', entityType)
+    .eq('entity_id', entityId);
+
+  if (error) {
+    console.warn('Attachment count query failed:', error.message || error, { entityType, entityId });
+    return 0;
+  }
+
+  return count || 0;
 }
 
 async function fetchWarningLettersByIssueDate(today) {
@@ -84,7 +103,7 @@ async function sendTodayWarningLetters(date = new Date()) {
 
     await push(lineUserId, warningFlex({
       id: warning.id,
-      employeeName: warning.employees.nickname || warning.employees.name,
+      employeeName: getDisplayName(warning.employees),
       level: warning.level,
       issueDate: warning.issue_date,
       note: warning.reason,
@@ -126,7 +145,7 @@ async function sendTodayAttendanceAlerts(date = new Date()) {
     await push(lineUserId, alertFlex({
       title: alert.title || 'แจ้งเตือนการเข้างานวันนี้',
       body: [
-        `พนักงาน: ${alert.employees.nickname || alert.employees.name}`,
+        `พนักงาน: ${getDisplayName(alert.employees)}`,
         `วันที่: ${alert.work_date}`,
         `สาขา: ${alert.branches ? alert.branches.code : '-'}`,
         alert.alert_time ? `เวลา: ${String(alert.alert_time).slice(0, 5)}` : null,
@@ -159,7 +178,7 @@ async function sendMonthEndPayroll(date = new Date()) {
     if (!lineUserId) continue;
 
     await push(lineUserId, payrollFlex({
-      employeeName: summary.employees.nickname || summary.employees.name,
+      employeeName: getDisplayName(summary.employees),
       gross: summary.gross_amount,
       allowance: 0,
       deductions: summary.deduction_amount,
@@ -177,9 +196,9 @@ async function sendMonthEndPayroll(date = new Date()) {
 async function sendLeaveResults() {
   const { data, error } = await supabase
     .from('leaves')
-    .select('id,leave_type,start_date,end_date,status,line_user_id,decided_by,employees(name,nickname,line_user_id)')
+    .select('id,leave_type,start_date,end_date,status,line_user_id,decided_by,audit_actor_name,employees(name,nickname,line_user_id)')
     .in('status', ['approved', 'rejected'])
-    .is('line_notified', false)
+    .or('line_notified.eq.false,line_notified.is.null')
     .order('updated_at', { ascending: true });
 
   if (error) {
@@ -194,21 +213,23 @@ async function sendLeaveResults() {
       continue;
     }
 
+    const attachmentCount = await countAttachments('leave', leave.id);
     const resultFlex = leaveFlex.leaveResultFlex({
       id: leave.id,
-      employeeName: leave.employees ? (leave.employees.nickname || leave.employees.name) : '-',
+      employeeName: getDisplayName(leave.employees, leave.line_user_id),
       type: leave.leave_type,
       from: leave.start_date,
       to: leave.end_date,
       status: leave.status,
-      approvedBy: leave.decided_by || 'ผู้จัดการ',
+      approvedBy: getDisplayName({ name: leave.audit_actor_name }, { username: leave.decided_by }, leave.decided_by),
+      attachmentCount,
     });
 
     try {
       await push(lineUserId, resultFlex);
       await supabase
         .from('leaves')
-        .update({ line_notified: true })
+        .update({ line_notified: true, updated_at: new Date().toISOString() })
         .eq('id', leave.id);
     } catch (sendError) {
       console.warn('Leave result LINE push failed:', sendError.message || sendError, { leave_id: leave.id, lineUserId });
@@ -248,19 +269,18 @@ async function notifySalesResults() {
 
     const branchCode = sale.branches ? (sale.branches.code || sale.branches.name) : '-';
     const saleDate = formatThaiDate(sale.sell_date || sale.confirmed_at);
-    const approvedBy = sale.confirmed_by || 'ผู้จัดการ';
+    const approvedBy = getDisplayName(sale.confirmed_by);
     const approvedAt = formatThaiDateTime(sale.confirmed_at);
+    const attachmentCount = await countAttachments('sale', sale.id);
 
     const message = approvedSalesResultFlex({
       saleId: sale.id,
       branchCode,
       saleDate,
       total: sale.total_amount || 0,
-      cash: sale.cash_amount || 0,
-      credit: sale.credit_amount || 0,
-      transfer: sale.transfer_amount || 0,
       approvedBy,
       approvedAt,
+      attachmentCount,
     });
 
     try {
@@ -286,6 +306,7 @@ async function notifyCashDepositResults() {
       status,
       verified_by,
       verified_at,
+      slip_url,
       line_group_id,
       line_notified,
       branches(code,name),
@@ -308,21 +329,16 @@ async function notifyCashDepositResults() {
 
     const branchCode = deposit.branches ? (deposit.branches.code || deposit.branches.name) : '-';
     const depositDate = deposit.deposit_date ? new Date(deposit.deposit_date).toLocaleDateString('th-TH') : '-';
-    const depositedBy = deposit.employees ? (deposit.employees.nickname || deposit.employees.name) : (deposit.line_user_id || '-');
-    const verifiedBy = deposit.verified_by || '-';
+    const verifiedBy = getDisplayName(deposit.verified_by);
     const verifiedAt = deposit.verified_at ? new Date(deposit.verified_at).toLocaleString('th-TH') : '-';
+    const slipCount = deposit.slip_url ? 1 : 0;
 
     const message = depositFlex.depositResultFlex({
       id: deposit.id,
       branchCode,
       depositDate,
-      expectedAmount: deposit.expected_amount,
       depositedAmount: deposit.deposited_amount,
-      bankShort: deposit.bank_accounts ? deposit.bank_accounts.bank_short : null,
-      bankName: deposit.bank_accounts ? deposit.bank_accounts.bank_name : null,
-      accountName: deposit.bank_accounts ? deposit.bank_accounts.account_name : null,
-      accountNo: deposit.bank_accounts ? deposit.bank_accounts.account_no : null,
-      depositedBy,
+      slipCount,
       verifiedBy,
       verifiedAt,
     });
@@ -339,6 +355,69 @@ async function notifyCashDepositResults() {
   }
 }
 
+async function notifyInspectionResults() {
+  const { data, error } = await supabase
+    .from('store_inspections')
+    .select(`
+      id,
+      work_date,
+      submit_time,
+      close_time,
+      status,
+      score,
+      photo_count,
+      manager_note,
+      reviewed_by,
+      review_time,
+      updated_at,
+      line_group_id,
+      line_notified,
+      branches(code,name),
+      employees(name,nickname)
+    `)
+    .in('status', ['pass', 'issue'])
+    .not('line_group_id', 'is', null)
+    .or('line_notified.eq.false,line_notified.is.null')
+    .order('updated_at', { ascending: true });
+
+  if (error) {
+    console.warn('Inspection notification job query failed:', error.message || error);
+    return;
+  }
+
+  for (const inspection of data || []) {
+    const groupId = inspection.line_group_id;
+    if (!groupId) continue;
+
+    const branchCode = inspection.branches ? (inspection.branches.code || inspection.branches.name) : '-';
+    const reviewedBy = getDisplayName(inspection.reviewed_by);
+    const reviewTime = inspection.review_time || null;
+
+    const message = inspectionResultFlex({
+      inspectionId: inspection.id,
+      branchCode,
+      status: inspection.status,
+      photoCount: inspection.photo_count || 0,
+      reviewedBy,
+      reviewTime,
+      managerNote: inspection.manager_note,
+    });
+
+    try {
+      await push(groupId, message);
+      await supabase
+        .from('store_inspections')
+        .update({
+          line_notified: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', inspection.id);
+    } catch (sendError) {
+      console.warn('Inspection result LINE push failed:', sendError.message || sendError, { inspection_id: inspection.id, groupId });
+    }
+  }
+}
+
 async function runLineJobs(date = new Date()) {
   if (running) return;
   running = true;
@@ -346,6 +425,7 @@ async function runLineJobs(date = new Date()) {
     await sendLeaveResults();
     await notifySalesResults();
     await notifyCashDepositResults();
+    await notifyInspectionResults();
     await sendTodayWarningLetters(date);
     await sendTodayAttendanceAlerts(date);
     await sendMonthEndPayroll(date);
@@ -364,4 +444,5 @@ module.exports = {
   sendMonthEndPayroll,
   notifySalesResults,
   notifyCashDepositResults,
+  notifyInspectionResults,
 };

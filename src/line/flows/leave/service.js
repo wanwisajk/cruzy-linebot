@@ -1,8 +1,6 @@
 const { supabase } = require('../../../../backend/config/supabase');
 const { blobClient } = require('../../../../backend/config/line');
 const { logEvent } = require('../../utils/audit');
-const { replyOrPush } = require('../../reply');
-const leaveFlex = require('../../flex/leaveFlex');
 
 function isMissingColumnError(error) {
   const message = `${error && error.message || ''} ${error && error.details || ''}`;
@@ -115,6 +113,7 @@ async function updateLeaveStatus(leaveId, status, actor, options = {}) {
     decided_at: decidedAt,
     updated_at: decidedAt,
     edited_by: editedBy,
+    line_notified: false,
   };
 
   if (options.actorType) payload.audit_actor_type = options.actorType;
@@ -132,6 +131,7 @@ async function updateLeaveStatus(leaveId, status, actor, options = {}) {
     const fallbackPayload = { ...payload };
     delete fallbackPayload.updated_at;
     delete fallbackPayload.edited_by;
+    delete fallbackPayload.line_notified;
 
     const retry = await supabase
       .from('leaves')
@@ -147,32 +147,6 @@ async function updateLeaveStatus(leaveId, status, actor, options = {}) {
   if (error) throw error;
 
   await logEvent('leave_status_updated', { leaveId, status, actor });
-
-  if (!options.skipNotification && data) {
-    const employeeLineId = (data.employees && data.employees.line_user_id) || data.line_user_id;
-    if (employeeLineId && (status === 'approved' || status === 'rejected')) {
-      const resultFlex = leaveFlex({
-        id: data.id,
-        employeeName: data.employees ? (data.employees.nickname || data.employees.name) : '-',
-        branchCode: data.branches ? data.branches.code : '-',
-        type: data.leave_type,
-        from: data.start_date,
-        to: data.end_date,
-        daysCount: data.days_count,
-        reason: data.reason,
-        status,
-        approvedBy: options.decidedBy || options.actorName || 'ผู้จัดการ',
-      });
-
-      try {
-        await replyOrPush({ to: employeeLineId, messages: [resultFlex] });
-      } catch (notificationError) {
-        console.warn('Leave notification push failed:', notificationError.message || notificationError, { leaveId, employeeLineId });
-      }
-    } else if (status === 'approved' || status === 'rejected') {
-      console.warn('Leave update did not send notification because no line_user_id was available', { leaveId, status, line_user_id: data.line_user_id, employeeLineId: data.employees && data.employees.line_user_id });
-    }
-  }
 
   return data;
 }

@@ -4,6 +4,7 @@ const openFlex = require('../../flex/openFlex');
 const { replyOrPush } = require('../../reply');
 const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
+const { getDisplayName } = require('../../utils/displayName');
 const {
   getBranchScheduleWindow,
   ensureAttendanceAlert,
@@ -11,15 +12,58 @@ const {
   parseDateFromText,
   parseTimeFromText,
 } = require('../../utils/attendance');
+const {
+  OPEN_STATUS,
+  IMAGE_WINDOW_MS,
+  getOpenStateKey,
+  getOpenState,
+  setOpenState,
+  updateOpenState,
+  clearOpenState,
+  hasOpenState,
+  setRecentOpenImage,
+  consumeRecentOpenImage,
+  setReminderTimer,
+  clearReminderTimer,
+} = require('./state');
+
+const MISSING_IMAGE_TEXT = 'กรุณาแนบรูปหน้าร้านที่เปิดเรียบร้อยแล้ว';
+
+function getReplyTarget(source = {}) {
+  return source.groupId || source.roomId || source.userId || null;
+}
+
+function scheduleMissingImageReminder(stateKey, target) {
+  if (!target) return;
+
+  const timer = setTimeout(async () => {
+    const state = getOpenState(stateKey);
+    if (!state || state.status !== OPEN_STATUS.AWAITING_IMAGE || state.reminderSent) return;
+
+    updateOpenState(stateKey, { reminderSent: true });
+
+    try {
+      await replyOrPush({
+        to: target,
+        messages: [{ type: 'text', text: MISSING_IMAGE_TEXT }],
+      });
+    } catch (err) {
+      console.warn('Unable to send opening image reminder:', err.message || err);
+    }
+  }, IMAGE_WINDOW_MS);
+
+  setReminderTimer(stateKey, timer);
+}
 
 async function handle(event) {
   const parsed = parseOpenEvent(event);
   const source = event.source || {};
   const lineUserId = source.userId || null;
+  const stateKey = getOpenStateKey(source);
 
   const actor = lineUserId ? await resolveLineActor(lineUserId) : null;
   const employee = actor && actor.employee ? actor.employee : null;
-  const employeeName = actor && actor.name ? actor.name : employee ? (employee.nickname || employee.name) : null;
+  const employeeName = getDisplayName(employee, actor && actor.user, actor && actor.name, lineUserId);
   const eventTime = event.timestamp ? new Date(event.timestamp) : new Date();
   const workDate = parseDateFromText(parsed.text, eventTime);
   const { branch, lineGroupId } = await resolveBranchFromEvent(event, parsed.text, {
@@ -39,52 +83,128 @@ async function handle(event) {
     workDate,
   });
   const lateBy = Math.max(0, minutesOf(clockIn) - minutesOf(schedule.shiftStart));
-
-  const record = await recordOpen({
+  const pendingImage = consumeRecentOpenImage(stateKey);
+  const openState = {
+    status: OPEN_STATUS.AWAITING_IMAGE,
     employeeId: employee ? employee.id : null,
+    employeeName,
     branchId: branch ? branch.id : null,
-    messageId: parsed.messageId,
-    hasImage: parsed.hasImage,
-    workDate,
-    clockIn,
-    lateBy,
-    source: 'line',
+    branchCode: branch.code,
+    branchName: branch.name,
     lineGroupId,
     lineUserId,
     messageText: parsed.text,
+    messageId: parsed.messageId,
     submittedAt: eventTime.toISOString(),
-    timestamp: eventTime.toISOString(),
-    rawText: parsed.text,
+    eventTimestamp: eventTime.toISOString(),
+    workDate,
+    clockIn,
+    expectedTime: schedule.shiftStart,
+    lateBy,
+    target: getReplyTarget(source),
+  };
+
+  if (pendingImage && pendingImage.messageId) {
+    return completeOpen({
+      event,
+      stateKey,
+      state: openState,
+      imageMessageId: pendingImage.messageId,
+      imageReceivedAt: pendingImage.receivedAt,
+    });
+  }
+
+  setOpenState(stateKey, openState);
+  scheduleMissingImageReminder(stateKey, openState.target);
+  return null;
+}
+
+async function completeOpen({ event, stateKey, state, imageMessageId, imageReceivedAt }) {
+  clearReminderTimer(stateKey);
+
+  const record = await recordOpen({
+    employeeId: state.employeeId,
+    branchId: state.branchId,
+    messageId: state.messageId,
+    imageMessageId,
+    hasImage: true,
+    workDate: state.workDate,
+    clockIn: state.clockIn,
+    lateBy: state.lateBy,
+    source: 'line',
+    lineGroupId: state.lineGroupId,
+    lineUserId: state.lineUserId,
+    messageText: state.messageText,
+    submittedAt: state.submittedAt,
+    timestamp: state.eventTimestamp,
+    rawText: state.messageText,
   });
 
-  if (lateBy > 0 && employee && branch) {
+  if (state.lateBy > 0 && state.employeeId && state.branchId) {
     await ensureAttendanceAlert({
       alertType: 'late',
-      employeeId: employee.id,
-      branchId: branch.id,
-      workDate,
+      employeeId: state.employeeId,
+      branchId: state.branchId,
+      workDate: state.workDate,
       title: 'มาสาย',
-      detail: `${employee.nickname || employee.name} เปิดร้านเวลา ${clockIn.slice(0, 5)} สาย ${lateBy} นาที (เวลาเข้างาน ${schedule.shiftStart.slice(0, 5)})`,
+      detail: `${state.employeeName} เปิดร้านเวลา ${state.clockIn.slice(0, 5)} สาย ${state.lateBy} นาที (เวลาเข้างาน ${state.expectedTime.slice(0, 5)})`,
       severity: 'warning',
-      alertTime: clockIn,
+      alertTime: state.clockIn,
     });
   }
 
   const flex = openFlex({
-    branch: branch.code,
-    employee: employeeName,
-    time: `${workDate} ${clockIn.slice(0, 5)}`,
-    expectedTime: schedule.shiftStart,
-    lateBy,
-    messageId: parsed.messageId,
+    branch: state.branchCode,
+    branchName: state.branchName,
+    employee: state.employeeName,
+    time: `${state.workDate} ${state.clockIn.slice(0, 5)}`,
+    expectedTime: state.expectedTime,
+    lateBy: state.lateBy,
+    messageId: imageMessageId,
+    messageText: state.messageText,
+    photoCount: 1,
+    imageReceivedAt,
+    attachmentUrl: record.attachment_url,
   });
 
-  // reply to user
   await replyOrPush({ replyToken: event.replyToken, to: null, messages: [flex] });
+  clearOpenState(stateKey);
 
   return record;
 }
 
+async function handleImageMessage(event) {
+  const source = event.source || {};
+  const stateKey = getOpenStateKey(source);
+  const messageId = event.message && event.message.id;
+
+  if (!messageId) return false;
+
+  const state = getOpenState(stateKey);
+  if (!state || state.status !== OPEN_STATUS.AWAITING_IMAGE) {
+    setRecentOpenImage(stateKey, {
+      messageId,
+      receivedAt: event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString(),
+    });
+    return false;
+  }
+
+  await completeOpen({
+    event,
+    stateKey,
+    state,
+    imageMessageId: messageId,
+    imageReceivedAt: event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString(),
+  });
+  return true;
+}
+
+function hasActiveOpenImageRequest(event) {
+  return hasOpenState(getOpenStateKey(event.source || {}));
+}
+
 module.exports = {
   handle,
+  handleImageMessage,
+  hasActiveOpenImageRequest,
 };

@@ -6,6 +6,7 @@ const { logEvent } = require('../../utils/audit');
 const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const { parseDateFromText } = require('../../utils/attendance');
+const { getDisplayName } = require('../../utils/displayName');
 const employeeRepo = require('../../../../backend/repositories/employee.repo');
 const {
   LEAVE_STATUS,
@@ -30,8 +31,7 @@ function eventIso(event) {
 }
 
 function employeeDisplayName(employee) {
-  if (!employee) return '-';
-  return employee.nickname ? `${employee.name} (${employee.nickname})` : employee.name;
+  return getDisplayName(employee);
 }
 
 function parseTargetEmployeeId(text) {
@@ -206,7 +206,7 @@ async function startLeave(event) {
   const actingAsUser = requestedByUser && actor.user;
   const actorType = actingAsUser ? 'user' : actor.type;
   const actorId = actingAsUser ? actor.user.id : actor.id;
-  const actorName = actingAsUser ? actor.user.name : actor.name;
+  const actorName = getDisplayName(actingAsUser ? actor.user : null, actor.employee, actor.name, lineUserId);
 
   setLeaveState(stateKey, {
     status: LEAVE_STATUS.AWAITING_TYPE,
@@ -377,20 +377,6 @@ async function submitLeave(event) {
       console.warn('Leave attachment upload failed:', attachment.id, err.message || err);
     }
   }
-
-  // Do not send approval to LINE; wait for web approval instead
-
-  await replyOrPush({
-    replyToken: event.replyToken,
-    messages: [leaveFlex.noticeFlex({
-      title: 'บันทึกคำขอลาแล้ว',
-      message: 'คำขอลาของคุณถูกบันทึกเรียบร้อย รอการอนุมัติจากผู้จัดการบนระบบเว็บ',
-      buttonLabel: 'ตกลง',
-      buttonText: 'ตกลง',
-      color: '#16A34A',
-      altText: 'บันทึกคำขอลาแล้ว',
-    })],
-  });
 
   await logEvent('leave_requested_sent', {
     leaveId: created.id,

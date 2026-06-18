@@ -2,6 +2,7 @@ const { supabase } = require('../../../backend/config/supabase');
 const employeeRepo = require('../../../backend/repositories/employee.repo');
 const userRepo = require('../../../backend/repositories/user.repo');
 const { resolveBranchFromEvent } = require('./context');
+const { getDisplayName } = require('./displayName');
 
 async function logEvent(eventType, payload) {
   try {
@@ -38,11 +39,7 @@ async function logInboundLineEvent(event) {
   const context = await safeResolveBranch(event, text);
   const employee = lineUserId ? await safeLookup(() => employeeRepo.findByLineUserId(lineUserId), 'employee') : null;
   const admin = lineUserId ? await safeLookup(() => userRepo.findByLineUserId(lineUserId), 'user') : null;
-  const actorName = employee
-    ? (employee.nickname ? `${employee.name} (${employee.nickname})` : employee.name)
-    : admin
-      ? admin.name
-      : (lineUserId || 'unknown_line_user');
+  const actorName = getDisplayName(employee, admin, lineUserId, 'unknown_line_user');
   const payload = {
     event_type: event.type,
     message_type: event.message && event.message.type || null,

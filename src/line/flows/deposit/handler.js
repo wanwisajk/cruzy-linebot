@@ -6,6 +6,7 @@ const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./state');
 const { logEvent } = require('../../utils/audit');
 const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
+const { getDisplayName } = require('../../utils/displayName');
 
 async function handle(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
@@ -52,6 +53,7 @@ async function handle(event) {
   }
 
   const bankAccount = await resolveBankAccount(parsed.bank, parsed.bankShort);
+  const actorName = getDisplayName(actorInfo.employee, actorInfo.user, actorInfo.name, actor);
 
   setDepositState(actor, {
     status: DEPOSIT_STATUS.AWAITING_SLIP,
@@ -72,9 +74,9 @@ async function handle(event) {
     diff: parsed.diff,
     actorType: actorInfo.type,
     actorId: actorInfo.id,
-    actorName: actorInfo.name || 'ไม่ระบุผู้ฝาก',
+    actorName,
     employeeId: actorInfo.employee ? actorInfo.employee.id : null,
-    employeeName: actorInfo.name || 'ไม่ระบุผู้ฝาก',
+    employeeName: actorName,
     replyToken: event.replyToken,
     slipUrls: [],
     source: 'line',

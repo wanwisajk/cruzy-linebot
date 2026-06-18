@@ -1,4 +1,5 @@
 const { formatDate, formatTime } = require('../utils/date');
+const { getDisplayName } = require('../../src/line/utils/displayName');
 
 function text(textValue) {
   return {
@@ -48,7 +49,8 @@ function menu() {
 
 function profile(employee) {
   const lines = [
-    ['ชื่อ', employee.name],
+    ['ชื่อ', getDisplayName(employee)],
+    ['ชื่อจริง', employee.name],
     ['ชื่อเล่น', employee.nickname],
     ['ตำแหน่ง', employee.position],
     ['ประเภท', employee.emp_type],

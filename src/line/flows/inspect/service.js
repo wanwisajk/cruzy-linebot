@@ -1,6 +1,48 @@
 const { supabase } = require('../../../../backend/config/supabase');
 const { blobClient } = require('../../../../backend/config/line');
 
+function isMissingColumnError(error, columnName) {
+  const message = `${error && error.message || ''} ${error && error.details || ''}`;
+  if (!error) return false;
+  if (columnName) {
+    return error.code === 'PGRST204' || new RegExp(`\\b${columnName}\\b`, 'i').test(message) || /schema cache/i.test(message);
+  }
+  return error.code === 'PGRST204' || /column|schema cache/i.test(message);
+}
+
+async function findOpeningInspection({ branchId, workDate }) {
+  const { data, error } = await supabase
+    .from('store_inspections')
+    .select('id,status,inspection_items,photo_count')
+    .eq('branch_id', branchId)
+    .eq('work_date', workDate)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  const items = data && data.inspection_items && typeof data.inspection_items === 'object'
+    ? data.inspection_items
+    : {};
+
+  return items.open_shop ? data : null;
+}
+
+async function listInspectionAttachments(inspectionId) {
+  if (!inspectionId) return [];
+
+  const { data, error } = await supabase
+    .from('attachments')
+    .select('*')
+    .eq('entity_type', 'store_inspection')
+    .eq('entity_id', inspectionId)
+    .order('created_at', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
 async function createInspection({
   branchId,
   employeeId,
@@ -14,13 +56,32 @@ async function createInspection({
   messageText,
   submittedAt,
 }) {
+  const { data: existing, error: selectError } = await supabase
+    .from('store_inspections')
+    .select('id,inspection_items,submitted_by')
+    .eq('branch_id', branchId)
+    .eq('work_date', workDate)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (selectError) throw selectError;
+
+  const existingItems = existing && existing.inspection_items && typeof existing.inspection_items === 'object'
+    ? existing.inspection_items
+    : {};
+
   const payload = {
     branch_id: branchId,
     work_date: workDate,
     submitted_by: employeeId || null,
     submit_time: submitTime,
     status: 'pending',
-    inspection_items: inspectionItems || {},
+    inspection_items: {
+      ...existingItems,
+      ...(inspectionItems || {}),
+      inspected_shop: true,
+    },
     photo_count: photoCount || 0,
     source: source || 'line',
     line_group_id: lineGroupId || null,
@@ -29,6 +90,45 @@ async function createInspection({
     submitted_at: submittedAt || null,
     created_at: submittedAt || new Date().toISOString(),
   };
+
+  if (existing) {
+    const updatePayload = { ...payload };
+    delete updatePayload.branch_id;
+    delete updatePayload.work_date;
+    delete updatePayload.created_at;
+
+    if (!employeeId && existing.submitted_by) {
+      delete updatePayload.submitted_by;
+    }
+
+    let { data, error } = await supabase
+      .from('store_inspections')
+      .update(updatePayload)
+      .eq('id', existing.id)
+      .select('*,branches(code,name),employees(name,nickname,line_user_id)')
+      .single();
+
+    if (error) {
+      const fallbackPayload = {
+        submitted_by: updatePayload.submitted_by,
+        submit_time: updatePayload.submit_time,
+        status: updatePayload.status,
+        inspection_items: updatePayload.inspection_items,
+        photo_count: updatePayload.photo_count,
+      };
+      const retry = await supabase
+        .from('store_inspections')
+        .update(fallbackPayload)
+        .eq('id', existing.id)
+        .select('*,branches(code,name),employees(name,nickname,line_user_id)')
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
+
+    if (!error) return data;
+    throw error;
+  }
 
   const { data, error } = await supabase
     .from('store_inspections')
@@ -44,7 +144,11 @@ async function createInspection({
     submitted_by: employeeId || null,
     submit_time: submitTime,
     status: 'pending',
-    inspection_items: inspectionItems || {},
+    inspection_items: {
+      ...existingItems,
+      ...(inspectionItems || {}),
+      inspected_shop: true,
+    },
     photo_count: photoCount || 0,
     created_at: submittedAt || new Date().toISOString(),
   };
@@ -103,12 +207,38 @@ async function uploadInspectionAttachment({ inspectionId, messageId }) {
   return data;
 }
 
+async function syncInspectionPhotoCount(inspectionId) {
+  const { count, error: countError } = await supabase
+    .from('attachments')
+    .select('id', { count: 'exact', head: true })
+    .eq('entity_type', 'store_inspection')
+    .eq('entity_id', inspectionId);
+
+  if (countError) throw countError;
+
+  const photoCount = count || 0;
+  const { data, error } = await supabase
+    .from('store_inspections')
+    .update({
+      photo_count: photoCount,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', inspectionId)
+    .select('*,branches(code,name),employees(name,nickname,line_user_id)')
+    .single();
+
+  if (error) throw error;
+  return { inspection: data, photoCount };
+}
+
 async function updateInspectionReview({ inspectionId, status, reviewedBy, reviewTime, managerNote, actorType, actorId }) {
   const payload = {
     status,
     reviewed_by: reviewedBy || null,
     review_time: reviewTime,
     manager_note: managerNote || null,
+    line_notified: false,
+    updated_at: new Date().toISOString(),
   };
 
   if (actorType) payload.audit_actor_type = actorType;
@@ -121,7 +251,25 @@ async function updateInspectionReview({ inspectionId, status, reviewedBy, review
     .select('*,branches(code,name),employees(name,nickname,line_user_id)')
     .single();
 
-  if (error) throw error;
+  if (error) {
+    if (isMissingColumnError(error, 'audit_actor_id') || isMissingColumnError(error, 'audit_actor_type')) {
+      const fallbackPayload = { ...payload };
+      delete fallbackPayload.audit_actor_type;
+      delete fallbackPayload.audit_actor_id;
+
+      const retry = await supabase
+        .from('store_inspections')
+        .update(fallbackPayload)
+        .eq('id', inspectionId)
+        .select('*,branches(code,name),employees(name,nickname,line_user_id)')
+        .single();
+
+      if (retry.error) throw retry.error;
+      return retry.data;
+    }
+
+    throw error;
+  }
   return data;
 }
 
@@ -137,8 +285,11 @@ async function fetchInspectionById(inspectionId) {
 }
 
 module.exports = {
+  findOpeningInspection,
+  listInspectionAttachments,
   createInspection,
   uploadInspectionAttachment,
+  syncInspectionPhotoCount,
   updateInspectionReview,
   fetchInspectionById,
 };

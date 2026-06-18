@@ -1,5 +1,6 @@
 const employeeRepo = require('../../../backend/repositories/employee.repo');
 const userRepo = require('../../../backend/repositories/user.repo');
+const { getDisplayName } = require('./displayName');
 
 async function resolveLineActor(lineUserId) {
   if (!lineUserId) return null;
@@ -9,11 +10,7 @@ async function resolveLineActor(lineUserId) {
   const employeeFromUser = !employee && user ? await employeeRepo.findByUserIdentity(user) : null;
   const resolvedEmployee = employee || employeeFromUser;
 
-  const employeeName = resolvedEmployee
-    ? (resolvedEmployee.nickname ? `${resolvedEmployee.name} (${resolvedEmployee.nickname})` : resolvedEmployee.name)
-    : null;
-  const userName = user ? (user.name || user.username) : null;
-  const name = userName || employeeName;
+  const name = getDisplayName(resolvedEmployee, user, lineUserId);
 
   return {
     employee: resolvedEmployee,

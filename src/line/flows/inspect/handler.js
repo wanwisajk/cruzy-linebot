@@ -5,8 +5,11 @@ const {
   updateInspectionState,
 } = require('./state');
 const {
+  findOpeningInspection,
+  listInspectionAttachments,
   createInspection,
   uploadInspectionAttachment,
+  syncInspectionPhotoCount,
 } = require('./service');
 const {
   inspectionSummaryFlex,
@@ -18,6 +21,7 @@ const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const { parseDateFromText, parseTimeFromText } = require('../../utils/attendance');
 const { logEvent } = require('../../utils/audit');
+const { getDisplayName } = require('../../utils/displayName');
 
 function getStateKey(event) {
   const source = event.source || {};
@@ -29,9 +33,7 @@ function getEventDate(event) {
 }
 
 function getSubmitterName(actor, lineUserId) {
-  if (actor && actor.user) return actor.user.name || actor.user.username;
-  if (actor && actor.employee) return actor.employee.nickname || actor.employee.name;
-  return lineUserId || 'ไม่ระบุ';
+  return getDisplayName(actor && actor.employee, actor && actor.user, actor && actor.name, lineUserId);
 }
 
 async function handle(event) {
@@ -89,15 +91,31 @@ async function startInspection(event) {
     return null;
   }
 
+  const openingInspection = await findOpeningInspection({ branchId: branch.id, workDate });
+  if (!openingInspection) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ยังไม่ได้เปิดร้านของวันที่ ${workDate} กรุณาพิมพ์ “เปิดร้าน ${branch.code}” ก่อน แล้วค่อยพิมพ์ “ตรวจร้าน” เพื่อส่งรูป` }] });
+    return null;
+  }
+  const openingAttachments = await listInspectionAttachments(openingInspection.id);
+  const openingPhotoCount = Math.max(
+    openingAttachments.length,
+    Number(openingInspection.photo_count || 0),
+    openingInspection.inspection_items && openingInspection.inspection_items.shopfront_image ? 1 : 0
+  );
+
   setInspectionState(stateKey, {
     status: INSPECTION_STATUS.COLLECTING_PHOTOS,
+    inspectionId: openingInspection.id,
+    openingPhotoCount,
+    openingAttachments,
+    openingAttachmentUrls: openingAttachments.map((attachment) => attachment.file_url).filter(Boolean),
     branchId: branch.id,
     branchCode: branch.code,
     employeeId: actor.employee ? actor.employee.id : null,
     submitterName: getSubmitterName(actor, lineUserId),
     actorType: actor.user && actor.employeeResolvedBy === 'user_identity' ? 'user' : actor.type,
     actorId: actor.user && actor.employeeResolvedBy === 'user_identity' ? actor.user.id : actor.id,
-    actorName: actor.user && actor.employeeResolvedBy === 'user_identity' ? actor.user.name : actor.name,
+    actorName: getDisplayName(actor.employee, actor.user, actor.name, lineUserId),
     lineGroupId,
     lineUserId,
     workDate,
@@ -135,7 +153,8 @@ async function handleDone(event) {
     return null;
   }
 
-  const photoCount = (state.imageMessages || []).length;
+  const newPhotoCount = (state.imageMessages || []).length;
+  const photoCount = Number(state.openingPhotoCount || 0) + newPhotoCount;
   if (photoCount === 0) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ยังไม่มีรูปตรวจร้าน กรุณาส่งรูปอย่างน้อย 1 รูป' }] });
     return null;
@@ -164,16 +183,20 @@ async function handleConfirm(event) {
   }
 
   const imageMessages = state.imageMessages || [];
+  const openingPhotoCount = Number(state.openingPhotoCount || 0);
+  const totalPhotoCount = openingPhotoCount + imageMessages.length;
   const inspection = await createInspection({
     branchId: state.branchId,
     employeeId: state.employeeId,
     workDate: state.workDate,
     submitTime: state.submitTime,
-    photoCount: imageMessages.length,
+    photoCount: totalPhotoCount,
     inspectionItems: {
       source: 'line',
       flow: 'store_inspection',
-      photo_count: imageMessages.length,
+      photo_count: totalPhotoCount,
+      opening_photo_count: openingPhotoCount,
+      inspection_photo_count: imageMessages.length,
       submitted_by_name: state.submitterName,
     },
     source: 'line',
@@ -192,11 +215,21 @@ async function handleConfirm(event) {
     }
   }
 
+  const { photoCount } = await syncInspectionPhotoCount(inspection.id);
+  const allAttachments = await listInspectionAttachments(inspection.id);
+  const attachments = allAttachments.length
+    ? allAttachments
+    : [
+      ...(state.openingAttachments || []),
+      ...uploaded,
+    ];
+
   const pendingFlex = inspectionPendingFlex({
     inspectionId: inspection.id,
     branchCode: state.branchCode,
     submitterName: state.submitterName,
-    photoCount: uploaded.length || imageMessages.length,
+    photoCount,
+    attachments,
     workDate: state.workDate,
     submitTime: state.submitTime,
   });
@@ -214,7 +247,7 @@ async function handleConfirm(event) {
     record_id: inspection.id,
     branch_id: state.branchId,
     actor: state.employeeId,
-    photo_count: uploaded.length || imageMessages.length,
+    photo_count: photoCount,
     manager_count: managers.length,
   });
   return true;

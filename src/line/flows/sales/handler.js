@@ -5,6 +5,7 @@ const { replyOrPush } = require('../../reply');
 const branchRepo = require('../../../../backend/repositories/branch.repo');
 const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
+const { getDisplayName } = require('../../utils/displayName');
 const {
   salesSummaryFlex,
   totalMismatchFlex,
@@ -48,11 +49,7 @@ async function handleTextMessage(event) {
     return;
   }
 
-  const submitterName = actor && actor.name
-    ? actor.name
-    : employee
-      ? (employee.nickname ? `${employee.name} (${employee.nickname})` : employee.name)
-      : 'ไม่ระบุผู้ส่ง';
+  const submitterName = getDisplayName(employee, user, actor && actor.name, lineUserId);
   const submitterIdentity = actor ? actor.type : null;
   const submitterId = actor ? actor.id : null;
   const parsed = parseSalesText(text);
