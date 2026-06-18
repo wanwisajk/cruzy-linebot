@@ -80,19 +80,38 @@ function bubble({ title, subtitle, color = COLORS.ink, body = [], footer, altTex
     },
   };
 }
-
 function primaryButton(label, action, color = COLORS.success) {
-  return { type: 'button', style: 'primary', color, action, height: 'sm', flex: 1 };
+  return {
+    type: 'box',
+    layout: 'vertical',
+    cornerRadius: 'md', // ✨ กำหนดความโค้งมนที่ตัวกล่องครอบ (xs, sm, md, lg, xl, xxl)
+    flex: 1,
+    contents: [
+      {
+        type: 'button',
+        style: 'primary',
+        color,
+        action: { ...(action || {}), label: action && action.label ? action.label : label },
+        height: 'sm',
+      }
+    ]
+  };
 }
 
 function secondaryButton(label, action) {
   return { 
-    type: 'button', 
-    style: 'secondary', 
-    color: COLORS.ink, 
-    action, 
-    height: 'sm', 
-    flex: 1
+    type: 'box',
+    layout: 'vertical',
+    cornerRadius: 'md', // ✨ กำหนดความโค้งมนที่ตัวกล่องครอบเช่นกัน
+    flex: 1,
+    contents: [
+      {
+        type: 'button',
+        style: 'secondary',
+        action: { ...(action || {}), label: action && action.label ? action.label : label },
+        height: 'sm',
+      }
+    ]
   };
 }
 
@@ -100,8 +119,6 @@ function resultFlex({ title, subtitle, statusLabel, statusColor, rows, altText, 
   const statusBadge = {
     type: 'box',
     layout: 'horizontal',
-    align: 'center',
-    justifyContent: 'center',
     backgroundColor: statusColor === COLORS.success || statusColor === '#16A34A' || statusColor === '#10B981' ? '#E6F4EA' : '#FCE8E6',
     paddingAll: 'sm',
     cornerRadius: 'md',

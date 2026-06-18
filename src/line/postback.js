@@ -576,7 +576,6 @@ async function handlePostback(event) {
         approved_by: actorName,
         confirmed_by: actorInfo.confirmedByUsername || null,
       });
-      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: `บันทึกการอนุมัติยอดขาย #${saleId} เรียบร้อยแล้ว` }] });
       return true;
     }
 

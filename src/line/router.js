@@ -1,4 +1,5 @@
 const openHandler = require('./flows/open/handler');
+const closeHandler = require('./flows/close/handler');
 const inspectHandler = require('./flows/inspect/handler');
 const registerHandler = require('./flows/register/handler');
 const { handleTextMessage, handleImageMessage, handleUploadPrompt, handleEditFlow } = require('./flows/sales/handler');
@@ -62,6 +63,9 @@ async function handleEvent(event) {
       if (depositState && depositState.status === DEPOSIT_STATUS.AWAITING_SLIP) {
         return depositHandler.handleImageMessage(event);
       }
+      if (closeHandler.hasActiveCloseImageRequest(event)) {
+        return closeHandler.handleImageMessage(event);
+      }
       if (openHandler.hasActiveOpenImageRequest(event)) {
         return openHandler.handleImageMessage(event);
       }
@@ -69,6 +73,7 @@ async function handleEvent(event) {
       if (salesState && salesState.status === FLOW_STATES.AWAITING_IMAGES) {
         return handleImageMessage(event);
       }
+      await closeHandler.handleImageMessage(event);
       await openHandler.handleImageMessage(event);
       return handleImageMessage(event);
     }
@@ -119,7 +124,6 @@ async function handleEvent(event) {
 
     if (isCloseShopCommand(text)) {
       console.log('🌙 Routing to close shop handler');
-      const closeHandler = require('./flows/close/handler');
       return closeHandler.handle(event);
     }
 
@@ -134,13 +138,15 @@ async function handleEvent(event) {
       return leaveHandler.handle(event);
     }
 
-    if (lower === 'ตรวจเสร็จ' || lower === 'ยืนยันส่ง') {
+    const hasActiveInspection = getScopedStateKeys(event.source || {}).some((key) => hasInspectionState(key));
+
+    if (lower === 'ตรวจเสร็จ' || (lower === 'ยืนยันส่ง' && hasActiveInspection)) {
       console.log('🔍 Routing to active inspect flow');
       return inspectHandler.handle(event);
     }
 
     if (
-      getScopedStateKeys(event.source || {}).some((key) => hasInspectionState(key)) &&
+      hasActiveInspection &&
       (lower.includes('ส่งรูป') || lower.includes('อัพรูป') || lower.includes('อัปโหลดรูป'))
     ) {
       return replyOrPush({

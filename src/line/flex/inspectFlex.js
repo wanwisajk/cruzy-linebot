@@ -42,7 +42,12 @@ function normalizeAttachmentItems({ attachments, attachmentUrls }) {
         const fileName = String((attachment && attachment.file_name) || '');
         const storagePath = String((attachment && attachment.storage_path) || '');
         const isOpeningPhoto = /open_shop/i.test(`${fileName} ${storagePath}`);
-        const label = isOpeningPhoto ? 'รูปเปิดร้าน' : `รูปตรวจ ${++inspectionIndex}`;
+        const isClosingPhoto = /close_shop/i.test(`${fileName} ${storagePath}`);
+        const label = isOpeningPhoto
+          ? 'รูปเปิดร้าน'
+          : isClosingPhoto
+            ? 'รูปปิดร้าน'
+            : `รูปตรวจ ${++inspectionIndex}`;
 
         return { uri, label, index };
       })

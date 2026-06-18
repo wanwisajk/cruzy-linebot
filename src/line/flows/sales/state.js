@@ -33,6 +33,21 @@ function updateFlowState(userId, updates) {
   return flowStates.get(key);
 }
 
+function appendFlowImage(userId, image) {
+  const existing = flowStates.get(userId);
+  if (!existing) return null;
+
+  const messageId = image && image.message_id;
+  const currentImages = Array.isArray(existing.images) ? existing.images : [];
+  const images = messageId && currentImages.some((item) => item && item.message_id === messageId)
+    ? currentImages
+    : [...currentImages, image];
+
+  const next = { ...existing, images, updated_at: Date.now() };
+  flowStates.set(userId, next);
+  return next;
+}
+
 // Cleanup old states (older than 1 hour)
 setInterval(() => {
   const now = Date.now();
@@ -49,4 +64,5 @@ module.exports = {
   getFlowState,
   setFlowState,
   updateFlowState,
+  appendFlowImage,
 };

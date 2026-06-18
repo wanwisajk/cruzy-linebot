@@ -6,6 +6,7 @@ CREATE TABLE public.branches (
   name character varying NOT NULL,
   code character varying NOT NULL UNIQUE,
   region_id integer,
+  line_group_id character varying,
   CONSTRAINT branches_pkey PRIMARY KEY (id),
   CONSTRAINT branches_region_id_fkey FOREIGN KEY (region_id) REFERENCES public.regions(id)
 );
@@ -54,6 +55,7 @@ CREATE TABLE public.users (
   scope_type character varying NOT NULL,
   scope_value character varying,
   created_at timestamp with time zone DEFAULT now(),
+  line_user_id character varying,
   CONSTRAINT users_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.leaves (
@@ -69,8 +71,19 @@ CREATE TABLE public.leaves (
   audit_actor_type character varying,
   audit_actor_id character varying,
   audit_actor_name text,
+  branch_id integer,
+  source character varying DEFAULT 'dashboard'::character varying,
+  line_group_id character varying,
+  line_user_id character varying,
+  message_text text,
+  submitted_at timestamp with time zone,
+  decided_at timestamp with time zone,
+  decided_by character varying,
+  line_notified boolean DEFAULT false,
+  updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT leaves_pkey PRIMARY KEY (id),
-  CONSTRAINT leaves_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id)
+  CONSTRAINT leaves_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id),
+  CONSTRAINT leaves_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id)
 );
 CREATE TABLE public.leave_balances (
   employee_id bigint NOT NULL,
@@ -117,6 +130,11 @@ CREATE TABLE public.sales (
   confirmed_at timestamp with time zone,
   status character varying DEFAULT 'draft'::character varying,
   raw_text text,
+  source character varying DEFAULT 'dashboard'::character varying,
+  line_group_id character varying,
+  line_user_id character varying,
+  updated_at timestamp with time zone DEFAULT now(),
+  line_notified boolean DEFAULT false,
   CONSTRAINT sales_pkey PRIMARY KEY (id),
   CONSTRAINT sales_submitted_by_fkey FOREIGN KEY (submitted_by) REFERENCES public.employees(id),
   CONSTRAINT sales_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id),
@@ -136,6 +154,13 @@ CREATE TABLE public.cash_deposits (
   verified_by character varying,
   verified_at timestamp with time zone,
   sale_id integer UNIQUE,
+  source character varying DEFAULT 'dashboard'::character varying,
+  line_group_id character varying,
+  line_user_id character varying,
+  message_text text,
+  submitted_at timestamp with time zone,
+  line_notified boolean DEFAULT false,
+  updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT cash_deposits_pkey PRIMARY KEY (id),
   CONSTRAINT cash_deposits_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
   CONSTRAINT cash_deposits_deposited_by_fkey FOREIGN KEY (deposited_by) REFERENCES public.employees(id),
@@ -174,6 +199,12 @@ CREATE TABLE public.attendance (
   is_break_over boolean DEFAULT false,
   created_at timestamp with time zone DEFAULT now(),
   break_end time without time zone,
+  source character varying DEFAULT 'dashboard'::character varying,
+  line_group_id character varying,
+  line_user_id character varying,
+  message_text text,
+  submitted_at timestamp with time zone,
+  closed_early_minutes integer DEFAULT 0,
   CONSTRAINT attendance_pkey PRIMARY KEY (id),
   CONSTRAINT attendance_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id),
   CONSTRAINT attendance_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id)
@@ -219,6 +250,9 @@ CREATE TABLE public.warning_letters (
   audit_actor_type character varying,
   audit_actor_id character varying,
   audit_actor_name text,
+  line_sent_at timestamp with time zone,
+  line_user_id character varying,
+  source character varying DEFAULT 'dashboard'::character varying,
   CONSTRAINT warning_letters_pkey PRIMARY KEY (id),
   CONSTRAINT warning_letters_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id),
   CONSTRAINT warning_letters_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id),
@@ -241,6 +275,12 @@ CREATE TABLE public.store_inspections (
   photo_count integer DEFAULT 0,
   is_late boolean DEFAULT false,
   late_minutes integer DEFAULT 0,
+  source character varying DEFAULT 'dashboard'::character varying,
+  line_group_id character varying,
+  line_user_id character varying,
+  message_text text,
+  submitted_at timestamp with time zone,
+  close_time time without time zone,
   CONSTRAINT store_inspections_pkey PRIMARY KEY (id),
   CONSTRAINT store_inspections_submitted_by_fkey FOREIGN KEY (submitted_by) REFERENCES public.employees(id),
   CONSTRAINT store_inspections_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches(id)
@@ -411,4 +451,17 @@ CREATE TABLE public.system_audit_logs (
   actor_type character varying,
   actor_id character varying,
   CONSTRAINT system_audit_logs_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.salary_summaries (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  employee_id bigint NOT NULL,
+  salary_month date NOT NULL,
+  gross_amount numeric NOT NULL DEFAULT 0,
+  deduction_amount numeric NOT NULL DEFAULT 0,
+  net_amount numeric NOT NULL DEFAULT 0,
+  detail jsonb DEFAULT '{}'::jsonb,
+  line_sent_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT salary_summaries_pkey PRIMARY KEY (id),
+  CONSTRAINT salary_summaries_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id)
 );

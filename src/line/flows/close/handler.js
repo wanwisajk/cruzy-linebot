@@ -1,4 +1,5 @@
 const { supabase } = require('../../../../backend/config/supabase');
+const { blobClient } = require('../../../../backend/config/line');
 const closeFlex = require('../../flex/closeFlex');
 const { replyOrPush } = require('../../reply');
 const { logEvent } = require('../../utils/audit');
@@ -13,16 +14,59 @@ const {
   ensureAttendanceAlert,
   createAbsenceAlertsForBranchDay,
 } = require('../../utils/attendance');
+const {
+  CLOSE_STATUS,
+  IMAGE_WINDOW_MS,
+  getCloseStateKey,
+  getCloseState,
+  setCloseState,
+  updateCloseState,
+  clearCloseState,
+  hasCloseState,
+  setRecentCloseImage,
+  consumeRecentCloseImage,
+  setReminderTimer,
+  clearReminderTimer,
+} = require('./state');
+
+const MISSING_IMAGE_TEXT = 'กรุณาแนบรูปหน้าร้านหลังปิดร้านเรียบร้อยแล้ว';
 
 function isMissingColumnError(error) {
   const message = `${error && error.message || ''} ${error && error.details || ''}`;
   return error && (error.code === 'PGRST204' || /column|schema cache/i.test(message));
 }
 
+function getReplyTarget(source = {}) {
+  return source.groupId || source.roomId || source.userId || null;
+}
+
+function scheduleMissingImageReminder(stateKey, target) {
+  if (!target) return;
+
+  const timer = setTimeout(async () => {
+    const state = getCloseState(stateKey);
+    if (!state || state.status !== CLOSE_STATUS.AWAITING_IMAGE || state.reminderSent) return;
+
+    updateCloseState(stateKey, { reminderSent: true });
+
+    try {
+      await replyOrPush({
+        to: target,
+        messages: [{ type: 'text', text: MISSING_IMAGE_TEXT }],
+      });
+    } catch (err) {
+      console.warn('Unable to send closing image reminder:', err.message || err);
+    }
+  }, IMAGE_WINDOW_MS);
+
+  setReminderTimer(stateKey, timer);
+}
+
 async function handle(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
   const source = event.source || {};
   const lineUserId = source.userId || null;
+  const stateKey = getCloseStateKey(source);
   const actorInfo = lineUserId ? await resolveLineActor(lineUserId) : null;
   const employee = actorInfo && actorInfo.employee ? actorInfo.employee : null;
   const actorName = getDisplayName(employee, actorInfo && actorInfo.user, actorInfo && actorInfo.name, lineUserId);
@@ -45,110 +89,164 @@ async function handle(event) {
     workDate,
   });
   const closedEarlyBy = Math.max(0, minutesOf(schedule.shiftEnd) - minutesOf(clockOut));
+  const closeState = {
+    status: CLOSE_STATUS.AWAITING_IMAGE,
+    employeeId: employee ? employee.id : null,
+    actorType: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? 'user' : actorInfo && actorInfo.type,
+    actorId: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? actorInfo.user.id : actorInfo && actorInfo.id,
+    actorName,
+    branchId: branch.id,
+    branchCode: branch.code,
+    lineGroupId,
+    lineUserId,
+    messageText: text,
+    workDate,
+    clockOut,
+    expectedTime: schedule.shiftEnd,
+    closedEarlyBy,
+    submittedAt: eventTime.toISOString(),
+    target: getReplyTarget(source),
+  };
 
-  if (employee && branch) {
+  const pendingImage = consumeRecentCloseImage(stateKey);
+  if (pendingImage && pendingImage.messageId) {
+    return completeClose({
+      event,
+      stateKey,
+      state: closeState,
+      imageMessageId: pendingImage.messageId,
+      imageReceivedAt: pendingImage.receivedAt,
+    });
+  }
+
+  setCloseState(stateKey, closeState);
+  scheduleMissingImageReminder(stateKey, closeState.target);
+  return null;
+}
+
+async function completeClose({ event, stateKey, state, imageMessageId, imageReceivedAt }) {
+  clearReminderTimer(stateKey);
+
+  if (state.employeeId && state.branchId) {
     const { data: attendance } = await supabase
       .from('attendance')
-      .select('id')
-      .eq('employee_id', employee.id)
-      .eq('branch_id', branch.id)
-      .eq('work_date', workDate)
+      .select('id,late_minutes')
+      .eq('employee_id', state.employeeId)
+      .eq('branch_id', state.branchId)
+      .eq('work_date', state.workDate)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
     if (attendance) {
       const payload = {
-        clock_out: clockOut,
-        closed_early_minutes: closedEarlyBy,
+        clock_out: state.clockOut,
+        closed_early_minutes: state.closedEarlyBy,
         source: 'line',
-        line_group_id: lineGroupId || null,
-        line_user_id: lineUserId || null,
-        message_text: text || null,
-        submitted_at: eventTime.toISOString(),
+        line_group_id: state.lineGroupId || null,
+        line_user_id: state.lineUserId || null,
+        message_text: state.messageText || null,
+        submitted_at: state.submittedAt,
       };
       const { error } = await supabase.from('attendance').update(payload).eq('id', attendance.id);
       if (error) {
         if (!isMissingColumnError(error)) throw error;
         await supabase.from('attendance').update({
-          clock_out: clockOut,
+          clock_out: state.clockOut,
           late_minutes: attendance.late_minutes || 0,
         }).eq('id', attendance.id);
       }
     } else {
       const payload = {
-        employee_id: employee.id,
-        branch_id: branch.id,
-        work_date: workDate,
-        clock_out: clockOut,
-        closed_early_minutes: closedEarlyBy,
+        employee_id: state.employeeId,
+        branch_id: state.branchId,
+        work_date: state.workDate,
+        clock_out: state.clockOut,
+        closed_early_minutes: state.closedEarlyBy,
         source: 'line',
-        line_group_id: lineGroupId || null,
-        line_user_id: lineUserId || null,
-        message_text: text || null,
-        submitted_at: eventTime.toISOString(),
+        line_group_id: state.lineGroupId || null,
+        line_user_id: state.lineUserId || null,
+        message_text: state.messageText || null,
+        submitted_at: state.submittedAt,
       };
       const { error } = await supabase.from('attendance').insert([payload]);
       if (error) {
         if (!isMissingColumnError(error)) throw error;
         await supabase.from('attendance').insert([{
-          employee_id: employee.id,
-          branch_id: branch.id,
-          work_date: workDate,
-          clock_out: clockOut,
+          employee_id: state.employeeId,
+          branch_id: state.branchId,
+          work_date: state.workDate,
+          clock_out: state.clockOut,
         }]);
       }
     }
 
-    if (closedEarlyBy > 0) {
+    if (state.closedEarlyBy > 0) {
       await ensureAttendanceAlert({
         alertType: 'closed_early',
-        employeeId: employee.id,
-        branchId: branch.id,
-        workDate,
+        employeeId: state.employeeId,
+        branchId: state.branchId,
+        workDate: state.workDate,
         title: 'ปิดร้านก่อนเวลา',
-        detail: `${getDisplayName(employee)} ปิดร้านเวลา ${clockOut.slice(0, 5)} ก่อนเวลา ${closedEarlyBy} นาที (เวลาปิด ${schedule.shiftEnd.slice(0, 5)})`,
+        detail: `${state.actorName} ปิดร้านเวลา ${state.clockOut.slice(0, 5)} ก่อนเวลา ${state.closedEarlyBy} นาที (เวลาปิด ${state.expectedTime.slice(0, 5)})`,
         severity: 'warning',
-        alertTime: clockOut,
+        alertTime: state.clockOut,
       });
     }
   }
 
-  await upsertStoreInspectionClose({
-    employeeId: employee ? employee.id : null,
-    branchId: branch.id,
-    workDate,
-    clockOut,
-    closedEarlyBy,
-    lineGroupId,
-    lineUserId,
-    messageText: text,
-    submittedAt: eventTime.toISOString(),
+  const inspection = await upsertStoreInspectionClose({
+    employeeId: state.employeeId,
+    branchId: state.branchId,
+    workDate: state.workDate,
+    clockOut: state.clockOut,
+    closedEarlyBy: state.closedEarlyBy,
+    lineGroupId: state.lineGroupId,
+    lineUserId: state.lineUserId,
+    messageText: state.messageText,
+    submittedAt: state.submittedAt,
+    imageMessageId,
   });
+  const attachment = inspection && inspection.id
+    ? await uploadCloseAttachment({
+      inspectionId: inspection.id,
+      messageId: imageMessageId,
+      inspectionItems: inspection.inspection_items,
+    })
+    : null;
 
-  await createAbsenceAlertsForBranchDay({ branchId: branch.id, workDate });
+  await createAbsenceAlertsForBranchDay({ branchId: state.branchId, workDate: state.workDate });
 
   await logEvent('close_shop_reported', {
-    actor: employee ? employee.id : lineUserId,
-    actorType: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? 'user' : actorInfo && actorInfo.type,
-    actorId: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? actorInfo.user.id : actorInfo && actorInfo.id,
-    actorName,
-    branch_id: branch.id,
-    branch_code: branch.code,
-    reported_at: eventTime.toISOString(),
-    raw_text: text,
+    actor: state.employeeId || state.lineUserId,
+    actorType: state.actorType,
+    actorId: state.actorId,
+    actorName: state.actorName,
+    branch_id: state.branchId,
+    branch_code: state.branchCode,
+    reported_at: state.submittedAt,
+    raw_text: state.messageText,
+    inspection_id: inspection ? inspection.id : null,
+    close_photo_url: attachment ? attachment.file_url : null,
   });
 
   await replyOrPush({
     replyToken: event.replyToken,
     messages: [closeFlex({
-      branchCode: branch.code,
-      employeeName: actorName,
-      time: `${workDate} ${clockOut.slice(0, 5)}`,
-      expectedTime: schedule.shiftEnd,
-      closedEarlyBy,
+      branchCode: state.branchCode,
+      employeeName: state.actorName,
+      time: `${state.workDate} ${state.clockOut.slice(0, 5)}`,
+      expectedTime: state.expectedTime,
+      closedEarlyBy: state.closedEarlyBy,
+      messageId: imageMessageId,
+      photoCount: 1,
+      imageReceivedAt,
+      attachmentUrl: attachment ? attachment.file_url : null,
     })],
   });
+
+  clearCloseState(stateKey);
+  return inspection;
 }
 
 async function upsertStoreInspectionClose({
@@ -161,6 +259,7 @@ async function upsertStoreInspectionClose({
   lineUserId,
   messageText,
   submittedAt,
+  imageMessageId,
 }) {
   const { data: existing, error: selectError } = await supabase
     .from('store_inspections')
@@ -179,6 +278,8 @@ async function upsertStoreInspectionClose({
   const inspectionItems = {
     ...existingItems,
     close_shop: true,
+    close_shop_image: Boolean(imageMessageId),
+    close_photo_message_id: imageMessageId || null,
     close_time: clockOut,
     closed_early_minutes: closedEarlyBy || 0,
     close_message_text: messageText || null,
@@ -220,7 +321,7 @@ async function upsertStoreInspectionClose({
     }
 
     if (error) throw error;
-    return existing;
+    return { ...existing, inspection_items: inspectionItems };
   }
 
   let { data, error } = await supabase
@@ -265,4 +366,116 @@ async function upsertStoreInspectionClose({
   return data;
 }
 
-module.exports = { handle };
+async function uploadCloseAttachment({ inspectionId, messageId, inspectionItems }) {
+  const contentResponse = await blobClient.getMessageContent(messageId);
+  const chunks = [];
+  for await (const chunk of contentResponse) {
+    chunks.push(chunk);
+  }
+
+  const buffer = Buffer.concat(chunks);
+  const fileName = `close_shop_${messageId}.jpg`;
+  const storagePath = `close/${inspectionId}/${Date.now()}_${fileName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('documents')
+    .upload(storagePath, buffer, {
+      contentType: 'image/jpeg',
+      cacheControl: '3600',
+      upsert: false,
+    });
+
+  if (uploadError) throw uploadError;
+
+  const { data: publicUrlData } = supabase.storage
+    .from('documents')
+    .getPublicUrl(storagePath);
+
+  const publicUrl = publicUrlData.publicUrl;
+  const { data, error } = await supabase
+    .from('attachments')
+    .insert([{
+      entity_type: 'store_inspection',
+      entity_id: inspectionId,
+      file_url: publicUrl,
+      storage_bucket: 'documents',
+      storage_path: storagePath,
+      file_name: fileName,
+      file_type: 'image/jpeg',
+      file_size: buffer.byteLength,
+    }])
+    .select('*')
+    .single();
+
+  if (error) throw error;
+
+  let photoCount = 1;
+  try {
+    const { count, error: countError } = await supabase
+      .from('attachments')
+      .select('id', { count: 'exact', head: true })
+      .eq('entity_type', 'store_inspection')
+      .eq('entity_id', inspectionId);
+
+    if (!countError) photoCount = count || 1;
+  } catch (err) {
+    console.warn('Unable to count closing attachments:', err.message || err);
+  }
+
+  try {
+    const items = inspectionItems && typeof inspectionItems === 'object' ? inspectionItems : {};
+    await supabase
+      .from('store_inspections')
+      .update({
+        inspection_items: {
+          ...items,
+          close_shop: true,
+          close_shop_image: true,
+          close_photo_message_id: messageId,
+          close_photo_url: publicUrl,
+        },
+        photo_count: photoCount,
+      })
+      .eq('id', inspectionId);
+  } catch (err) {
+    console.warn('Unable to update closing photo metadata:', err.message || err);
+  }
+
+  return data;
+}
+
+async function handleImageMessage(event) {
+  const source = event.source || {};
+  const stateKey = getCloseStateKey(source);
+  const messageId = event.message && event.message.id;
+
+  if (!messageId) return false;
+
+  const state = getCloseState(stateKey);
+  if (!state || state.status !== CLOSE_STATUS.AWAITING_IMAGE) {
+    setRecentCloseImage(stateKey, {
+      messageId,
+      receivedAt: event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString(),
+    });
+    return false;
+  }
+
+  await completeClose({
+    event,
+    stateKey,
+    state,
+    imageMessageId: messageId,
+    imageReceivedAt: event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString(),
+  });
+  return true;
+}
+
+function hasActiveCloseImageRequest(event) {
+  return hasCloseState(getCloseStateKey(event.source || {}));
+}
+
+module.exports = {
+  handle,
+  handleImageMessage,
+  hasActiveCloseImageRequest,
+};

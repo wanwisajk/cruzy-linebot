@@ -31,6 +31,20 @@ async function push(to, message) {
   return lineClient.pushMessage({ to, messages: [message] });
 }
 
+function getLineErrorDetail(error) {
+  const responseData =
+    error && error.response && error.response.data ||
+    error && error.originalError && error.originalError.response && error.originalError.response.data ||
+    error && error.body;
+
+  return {
+    message: error && error.message,
+    statusCode: error && (error.statusCode || error.status),
+    response: responseData || null,
+    details: error && error.details || null,
+  };
+}
+
 async function countAttachments(entityType, entityId) {
   if (!entityType || !entityId) return 0;
 
@@ -413,7 +427,7 @@ async function notifyInspectionResults() {
         })
         .eq('id', inspection.id);
     } catch (sendError) {
-      console.warn('Inspection result LINE push failed:', sendError.message || sendError, { inspection_id: inspection.id, groupId });
+      console.warn('Inspection result LINE push failed:', getLineErrorDetail(sendError), { inspection_id: inspection.id, groupId });
     }
   }
 }

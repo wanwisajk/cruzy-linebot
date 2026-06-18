@@ -9,23 +9,27 @@ function formatDateTime(value) {
 
 function openFlex({ branch, branchName, employee, time, expectedTime, lateBy, messageId, messageText, photoCount, imageReceivedAt, attachmentUrl }) {
   const late = lateBy && lateBy > 0;
+  
+  // ปรับไปใช้สีระบบสากลตามที่ออกแบบไว้ใน uiFlex
   const headerColor = late ? COLORS.warning : COLORS.teal; 
   const statusColor = late ? COLORS.danger : COLORS.success;
 
   return bubble({
-    title: late ? 'เปิดร้านสาย' : 'เปิดร้านสำเร็จ',
+    title: late ? '⚠️ เปิดร้านสาย' : '✅ เปิดร้านสำเร็จ',
     subtitle: `สาขา ${String(branch || '-')}`,
     color: headerColor,
     altText: late ? `เปิดร้านสาย ${lateBy} นาที` : 'เปิดร้านสำเร็จเรียบร้อย',
     body: [
       card([
-        row('ผู้เปิดร้าน', employee || '-'),
-        row('สาขา', branchName ? `${branch} - ${branchName}` : branch || '-'),
-        row('เวลาเปิด', time || '-', late ? COLORS.warning : COLORS.success),
-        row('เวลาเข้างาน', expectedTime ? `${String(expectedTime).slice(0, 5)} น.` : '-'),
-        row('สถานะ', late ? `สาย ${lateBy} นาที` : 'ตรงเวลา', statusColor),
-        row('รูปหน้าร้าน', messageId ? `${photoCount || 1} รูป` : 'ยังไม่มีรูป', messageId ? COLORS.success : COLORS.danger),
-        row('เวลารับรูป', formatDateTime(imageReceivedAt)),
+        row('👤 ผู้เปิดร้าน', employee || '-'),
+        row('📍 สาขา', branchName ? `${branch} - ${branchName}` : branch || '-'),
+        row('⏰ เวลาเปิด', time || '-', late ? COLORS.warning : COLORS.success),
+        row('📅 เวลาเข้างาน', expectedTime ? `${String(expectedTime).slice(0, 5)} น.` : '-'),
+        row('📌 สถานะ', late ? `สาย ${lateBy} นาที` : 'ตรงเวลา', statusColor),
+        row('📸 รูปหน้าร้าน', messageId ? `${photoCount || 1} รูป` : 'ยังไม่มีรูป', messageId ? COLORS.success : COLORS.danger),
+        row('⏳ เวลารับรูป', formatDateTime(imageReceivedAt)),
+        
+        // กล่องแจ้งเตือนความเรียบร้อยด้านล่าง (Alert Box สไตล์ใหม่แบบไร้ขอบ)
         {
           type: 'box',
           layout: 'vertical',
@@ -36,7 +40,7 @@ function openFlex({ branch, branchName, employee, time, expectedTime, lateBy, me
           contents: [
             { 
               type: 'text', 
-              text: 'ข้อมูลเปิดร้านถูกบันทึกเข้าระบบแล้ว', 
+              text: '✨ ข้อมูลเปิดร้านถูกบันทึกเข้าระบบแล้ว', 
               color: late ? '#B45309' : COLORS.success, 
               size: 'xs', 
               weight: 'bold', 
@@ -44,7 +48,7 @@ function openFlex({ branch, branchName, employee, time, expectedTime, lateBy, me
             },
             messageText ? { 
               type: 'text', 
-              text: `ข้อความ: ${messageText}`, 
+              text: `💬 ข้อความ: ${messageText}`, 
               color: COLORS.muted, 
               size: 'xs', 
               margin: 'xs', 
@@ -52,7 +56,7 @@ function openFlex({ branch, branchName, employee, time, expectedTime, lateBy, me
             } : null,
             attachmentUrl ? { 
               type: 'text', 
-              text: 'แนบไฟล์รูปหน้าร้านเรียบร้อย', 
+              text: '📎 แนบไฟล์รูปหน้าร้านเรียบร้อย', 
               color: COLORS.muted, 
               size: 'xs', 
               margin: 'xs', 

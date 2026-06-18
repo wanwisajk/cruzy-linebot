@@ -1,5 +1,5 @@
 const { parseSalesText } = require('./parser');
-const { getFlowState, setFlowState, updateFlowState, FLOW_STATES } = require('./state');
+const { getFlowState, setFlowState, updateFlowState, appendFlowImage, FLOW_STATES } = require('./state');
 const { createDraftSale, saveAttachments } = require('./service');
 const { replyOrPush } = require('../../reply');
 const branchRepo = require('../../../../backend/repositories/branch.repo');
@@ -9,10 +9,28 @@ const { getDisplayName } = require('../../utils/displayName');
 const {
   salesSummaryFlex,
   totalMismatchFlex,
-  finalReviewFlex,
   managerApprovalFlex,
   salesNoticeFlex,
 } = require('../../flex/salesFlex');
+
+function salesImagePromptMessage() {
+  return {
+    type: 'text',
+    text: 'ส่งรูปหลักฐาน 3 รูปได้เลย แล้วระบบจะสรุปยอดขายให้ตรวจอีกครั้งเมื่อรับครบ',
+    quickReply: {
+      items: [
+        {
+          type: 'action',
+          action: { type: 'cameraRoll', label: '📸 เลือกรูป' },
+        },
+        {
+          type: 'action',
+          action: { type: 'camera', label: '📷 ถ่ายรูป' },
+        },
+      ],
+    },
+  };
+}
 
 async function handleTextMessage(event) {
   const text = event.message.text || '';
@@ -83,9 +101,9 @@ async function handleTextMessage(event) {
     return;
   }
 
-  // เริ่มต้น State หลังตรวจยอดสำเร็จ รอให้พนักงานกดส่งรูปหลักฐาน
+  // เริ่มต้น State หลังตรวจยอดสำเร็จ แล้วรอรูปหลักฐานทันที
   setFlowState(lineUserId, {
-    status: FLOW_STATES.AWAITING_CONFIRMATION,
+    status: FLOW_STATES.AWAITING_IMAGES,
     branch_id: branch.id,
     branch_code: branch.code,
     line_group_id: context.lineGroupId,
@@ -104,16 +122,7 @@ async function handleTextMessage(event) {
 
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [
-      salesSummaryFlex({
-        branchCode: branch.code,
-        submitterName,
-        cash: parsed.cash_amount,
-        credit: parsed.credit_amount,
-        transfer: parsed.transfer_amount,
-        total: parsed.total_sales,
-      }),
-    ],
+    messages: [salesImagePromptMessage()],
   });
 }
 
@@ -133,28 +142,32 @@ async function handleImageMessage(event) {
   }
 
   // 3. บันทึกข้อมูลรูปภาพสะสมเข้าใน State Memory เงียบๆ
-  flowState.images.push({
+  const nextState = appendFlowImage(lineUserId, {
     message_id: event.message.id,
     received_at: new Date().toISOString(),
   });
+  if (!nextState) return;
 
-  const imageCount = flowState.images.length;
-  const shouldShowFinalReview = imageCount >= 3 && !flowState.imageSummaryShown;
+  const imageCount = (nextState.images || []).length;
+  console.log('📸 Sales image received:', { lineUserId, imageCount, messageId: event.message.id });
+  const shouldShowFinalReview = imageCount >= 3 && !nextState.imageSummaryShown;
 
   if (shouldShowFinalReview) {
-    flowState.imageSummaryShown = true;
-    updateFlowState(lineUserId, { ...flowState, status: FLOW_STATES.AWAITING_FINAL_CONFIRMATION });
+    const updatedState = updateFlowState(lineUserId, {
+      imageSummaryShown: true,
+      status: FLOW_STATES.AWAITING_FINAL_CONFIRMATION,
+    });
 
     await replyOrPush({
       replyToken: event.replyToken,
       messages: [
-        finalReviewFlex({
-          branchCode: flowState.branch_code,
-          submitterName: flowState.submitter_name,
-          cash: flowState.parsed_data.cash_amount,
-          credit: flowState.parsed_data.credit_amount,
-          transfer: flowState.parsed_data.transfer_amount,
-          total: flowState.parsed_data.total_sales,
+        salesSummaryFlex({
+          branchCode: updatedState.branch_code,
+          submitterName: updatedState.submitter_name,
+          cash: updatedState.parsed_data.cash_amount,
+          credit: updatedState.parsed_data.credit_amount,
+          transfer: updatedState.parsed_data.transfer_amount,
+          total: updatedState.parsed_data.total_sales,
           imageCount,
         })
       ],
@@ -162,7 +175,6 @@ async function handleImageMessage(event) {
     return;
   }
 
-  updateFlowState(lineUserId, flowState);
 }
 
 async function handleUploadPrompt(event) {
@@ -199,34 +211,13 @@ async function handleUploadPrompt(event) {
   if (flowState.status === FLOW_STATES.AWAITING_CONFIRMATION) {
     await updateFlowState(lineUserId, { status: FLOW_STATES.AWAITING_IMAGES });
   } else if (flowState.status !== FLOW_STATES.AWAITING_IMAGES) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'รายการนี้อยู่ขั้นตอนสรุปแล้ว กรุณากดบันทึกยอดขายหรือแก้ไขข้อมูล' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'รายการนี้อยู่ขั้นตอนสรุปแล้ว กรุณากดยืนยันส่งหรือแก้ไขข้อมูล' }] });
     return;
   }
 
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [{
-      type: 'text',
-      text: 'ส่งรูปหลักฐาน 3 รูปได้เลย แล้วสรุปทั้งหมดให้อัตโนมัติเมื่อครบ 3 รูป',
-      quickReply: {
-        items: [
-          {
-            type: 'action',
-            action: {
-              type: 'cameraRoll',
-              label: '📸 เลือกรูป'
-            }
-          },
-          {
-            type: 'action',
-            action: {
-              type: 'camera',
-              label: '📷 ถ่ายรูป'
-            }
-          }
-        ]
-      }
-    }],
+    messages: [salesImagePromptMessage()],
   });
 }
 
@@ -262,8 +253,10 @@ async function handleConfirmation(event) {
     return;
   }
 
-  // Handle final save when user confirms in final review
-  if (flowState.status === FLOW_STATES.AWAITING_FINAL_CONFIRMATION && text.trim() === 'บันทึกยอดขาย') {
+  const wantsFinalSave = text.trim() === 'บันทึกยอดขาย' || /ยืนยัน(?:การส่ง|ส่ง)?/i.test(text.trim());
+
+  // Handle final save when user confirms from the sales summary.
+  if (flowState.status === FLOW_STATES.AWAITING_FINAL_CONFIRMATION && wantsFinalSave) {
     const calc = Number(flowState.parsed_data.cash_amount || 0) + Number(flowState.parsed_data.credit_amount || 0) + Number(flowState.parsed_data.transfer_amount || 0);
     const entered = Number(flowState.parsed_data.total_sales || 0);
     if (calc !== entered) {
@@ -368,33 +361,7 @@ async function handleConfirmation(event) {
     await updateFlowState(lineUserId, { status: FLOW_STATES.AWAITING_IMAGES });
     await replyOrPush({
       replyToken: event.replyToken,
-      messages: [salesNoticeFlex({
-        title: 'พร้อมรับรูปหลักฐาน',
-        subtitle: 'ส่งได้สูงสุด 3 รูป',
-        message: 'กรุณาส่งรูปหลักฐาน 3 รูป ระบบจะสรุปยอดให้เมื่อรับครบ',
-        buttonLabel: 'ส่งรูปหลักฐาน',
-        buttonText: 'ส่งรูปหลักฐาน',
-        color: '#2563EB',
-        altText: 'พร้อมรับรูปหลักฐาน',
-        quickReply: {
-          items: [
-            {
-              type: 'action',
-              action: {
-                type: 'cameraRoll',
-                label: '📸 เลือกรูป'
-              }
-            },
-            {
-              type: 'action',
-              action: {
-                type: 'camera',
-                label: '📷 ถ่ายรูป'
-              }
-            }
-          ]
-        }
-      })]
+      messages: [salesImagePromptMessage()],
     });
     return;
   }
@@ -412,7 +379,8 @@ async function handleConfirmation(event) {
     return;
   }
 
-  const imageCount = flowState.images.length;
+  const imageCount = (flowState.images || []).length;
+  console.log('✅ Sales confirmation image count:', { lineUserId, imageCount, status: flowState.status, text });
   if (imageCount < 3) {
     await replyOrPush({
       replyToken: event.replyToken,
@@ -428,14 +396,13 @@ async function handleConfirmation(event) {
     return;
   }
 
-  // เปลี่ยน flow: เมื่อผู้ใช้กดยืนยันหลังส่งรูป -> ไม่บันทึกทันที
-  // ให้ไปสู่ Final Review (AWAITING_FINAL_CONFIRMATION)
+  // เมื่อครบ 3 รูปแล้วแต่ยังไม่ได้แสดงสรุป ให้แสดงสรุปยอดขายพร้อมปุ่มยืนยันส่ง
   await updateFlowState(lineUserId, { status: FLOW_STATES.AWAITING_FINAL_CONFIRMATION });
 
   await replyOrPush({
     replyToken: event.replyToken,
     messages: [
-      finalReviewFlex({
+      salesSummaryFlex({
         branchCode: flowState.branch_code,
         submitterName: flowState.submitter_name,
         cash: flowState.parsed_data.cash_amount,
