@@ -1,7 +1,12 @@
 const depositFlex = require('../../flex/depositFlex');
 const { replyOrPush } = require('../../reply');
 const { parseDepositText } = require('./parser');
-const { recordDeposit, uploadSlipImage, resolveBankAccount } = require('./service');
+const {
+  getLineMessageContentBuffer,
+  verifyDepositSlip,
+  resolveBankAccount,
+  resolveBranchBankAccount,
+} = require('./service');
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./state');
 const { logEvent } = require('../../utils/audit');
 const { resolveLineActor } = require('../../utils/actor');
@@ -39,7 +44,7 @@ async function handle(event) {
 
   const parsed = parseDepositText(text, eventDate);
   if (!parsed.amount || parsed.amount <= 0) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาพิมพ์ยอดฝาก เช่น: ฝาก CCA 1,500' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาพิมพ์ยอดฝาก เช่น: ฝากเงิน 18/06 1,500' }] });
     return;
   }
 
@@ -48,11 +53,11 @@ async function handle(event) {
     workDate: parsed.depositDate,
   });
   if (!branch) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์เช่น ฝาก CCA 1,500' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์เช่น ฝากเงิน 18/06 1,500' }] });
     return;
   }
 
-  const bankAccount = await resolveBankAccount(parsed.bank, parsed.bankShort);
+  const bankAccount = await resolveBankAccount(parsed.bank, parsed.bankShort) || await resolveBranchBankAccount(branch.id);
   const actorName = getDisplayName(actorInfo.employee, actorInfo.user, actorInfo.name, actor);
 
   setDepositState(actor, {
@@ -79,6 +84,7 @@ async function handle(event) {
     employeeName: actorName,
     replyToken: event.replyToken,
     slipUrls: [],
+    slipMessageIds: [],
     source: 'line',
   });
 
@@ -87,7 +93,7 @@ async function handle(event) {
     messages: [
       {
         type: 'text',
-        text: `บันทึกยอดฝาก ${Number(parsed.amount).toLocaleString()} บาท\nวันที่ ${parsed.depositDate}\nสาขา ${branch.code}${parsed.bankShort ? `\nธนาคาร: ${parsed.bankShort}` : parsed.bank ? `\nธนาคาร: ${parsed.bank}` : ''}\nส่งรูปสลิป 1 รูปได้เลยครับ`,
+        text: `ส่งรูปสลิปหลักฐานการฝากเงินได้เลย แล้วระบบจะสรุปยอดฝาก`,
         quickReply: {
           items: [
             {
@@ -128,17 +134,46 @@ async function handleImageMessage(event) {
     return true;
   }
 
-  const slipUrl = await uploadSlipImage(messageId);
-  const slipUrls = Array.isArray(state.slipUrls) ? state.slipUrls.slice() : [];
-  slipUrls.push(slipUrl);
+  const buffer = await getLineMessageContentBuffer(messageId);
+  let slipCheck = null;
+  try {
+    slipCheck = await verifyDepositSlip({
+      buffer,
+      expectedAmount: state.amount,
+    });
+  } catch (err) {
+    console.warn('Deposit slip OCR failed:', err.message || err, {
+      messageId,
+      expectedAmount: state.amount,
+    });
+  }
+
+  if (slipCheck && !slipCheck.ok) {
+    let text;
+    if (slipCheck.reason === 'amount_mismatch') {
+      text = `ยอดเงินในสลิปไม่ตรงกับยอดฝากที่พิมพ์ไว้\nยอดที่พิมพ์: ${Number(slipCheck.expectedAmount || state.amount).toLocaleString()} บาท\nยอดในสลิป: ${slipCheck.actualAmount != null ? Number(slipCheck.actualAmount).toLocaleString() : '-'} บาท\nกรุณาส่งรูปสลิปของยอดที่ถูกต้องอีกครั้ง`;
+    } else {
+      text = `อ่านยอดเงินในสลิปไม่ชัดเจน\nยอดที่พิมพ์: ${Number(slipCheck.expectedAmount || state.amount).toLocaleString()} บาท\nกรุณาส่งรูปสลิปที่เห็นยอดเงินชัดเจนอีกครั้ง`;
+    }
+
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text }] });
+    return true;
+  }
+
+  const slipMessageIds = Array.isArray(state.slipMessageIds) ? state.slipMessageIds.slice() : [];
+  if (!slipMessageIds.includes(messageId)) {
+    slipMessageIds.push(messageId);
+  }
+
   const nextStatus = state.status === DEPOSIT_STATUS.AWAITING_SLIP
     ? DEPOSIT_STATUS.AWAITING_CONFIRMATION
     : state.status;
   setDepositState(actor, {
     ...state,
     status: nextStatus,
-    slipUrl,
-    slipUrls,
+    slipMessageIds,
+    slipOcr: slipCheck ? slipCheck.ocr : state.slipOcr,
+    slipAmountVerified: slipCheck ? !slipCheck.skipped : false,
     tempId: String(actor),
   });
 
@@ -147,7 +182,10 @@ async function handleImageMessage(event) {
       tempId: actor,
       amount: state.amount,
       bank: state.bankAccountName || state.bankShort || state.bank,
-      slipCount: slipUrls.length,
+      slipCount: slipMessageIds.length,
+      branchCode: state.branchCode,
+      submitterName: state.employeeName,
+      depositDate: state.depositDate,
     });
     await replyOrPush({ replyToken: event.replyToken, messages: [confirmFlex] });
   }

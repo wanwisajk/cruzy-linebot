@@ -345,9 +345,10 @@ async function notifyCashDepositResults() {
     const depositDate = deposit.deposit_date ? new Date(deposit.deposit_date).toLocaleDateString('th-TH') : '-';
     const verifiedBy = getDisplayName(deposit.verified_by);
     const verifiedAt = deposit.verified_at ? new Date(deposit.verified_at).toLocaleString('th-TH') : '-';
-    const slipCount = deposit.slip_url ? 1 : 0;
+    const attachmentCount = await countAttachments('cash_deposit', deposit.id);
+    const slipCount = attachmentCount || (deposit.slip_url ? 1 : 0);
 
-    const message = depositFlex.depositResultFlex({
+    const message = depositFlex.depositApprovedResultFlex({
       id: deposit.id,
       branchCode,
       depositDate,

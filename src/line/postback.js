@@ -9,7 +9,7 @@ const { resolveLineActor } = require('./utils/actor');
 const { fetchInspectionById, updateInspectionReview } = require('./flows/inspect/service');
 const { inspectionPendingFlex } = require('./flex/inspectFlex');
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
-const { recordDeposit } = require('./flows/deposit/service');
+const { recordDeposit, saveDepositSlipAttachments } = require('./flows/deposit/service');
 const { getDisplayName } = require('./utils/displayName');
 
 async function fetchSaleById(saleId) {
@@ -147,6 +147,39 @@ function formatBangkokTime(dateValue) {
     second: '2-digit',
     hour12: false,
   });
+}
+
+function getLegacyDepositSlipUrls(pendingState) {
+  if (!pendingState) return [];
+  if (Array.isArray(pendingState.slipUrls) && pendingState.slipUrls.length > 0) {
+    return pendingState.slipUrls.filter(Boolean);
+  }
+  return pendingState.slipUrl ? [pendingState.slipUrl] : [];
+}
+
+async function savePendingDepositSlips(deposit, pendingState) {
+  if (!deposit || !deposit.id || !pendingState) {
+    return { slipUrls: [], slipCount: 0 };
+  }
+
+  const slipMessageIds = Array.isArray(pendingState.slipMessageIds)
+    ? pendingState.slipMessageIds
+    : [];
+  const attachments = await saveDepositSlipAttachments({
+    depositId: deposit.id,
+    messageIds: slipMessageIds,
+  });
+  const attachmentUrls = attachments
+    .map((attachment) => attachment && attachment.file_url)
+    .filter(Boolean);
+  const slipUrls = attachmentUrls.length > 0
+    ? attachmentUrls
+    : getLegacyDepositSlipUrls(pendingState);
+
+  return {
+    slipUrls,
+    slipCount: slipUrls.length || slipMessageIds.length,
+  };
 }
 
 async function resolveReviewActor(event) {
@@ -325,6 +358,12 @@ async function handlePostback(event) {
       return true;
     }
 
+    if (action === 'edit') {
+      setDepositState(actor, null);
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'แก้ไขข้อมูลได้เลยครับ พิมพ์ยอดฝากใหม่อีกครั้ง' }] });
+      return true;
+    }
+
     if (action !== 'send') {
       await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'คำสั่งไม่ถูกต้อง' }] });
       return true;
@@ -337,7 +376,8 @@ async function handlePostback(event) {
       deposited_amount: pendingState.amount,
       bank: pendingState.bank || null,
       bank_short: pendingState.bankShort || null,
-      slip_url: pendingState.slipUrls && pendingState.slipUrls[0] ? pendingState.slipUrls[0] : pendingState.slipUrl || null,
+      bank_account_id: pendingState.bankAccountId || null,
+      slip_url: getLegacyDepositSlipUrls(pendingState)[0] || null,
       source: 'line',
       line_group_id: pendingState.lineGroupId,
       line_user_id: pendingState.lineUserId,
@@ -350,6 +390,8 @@ async function handlePostback(event) {
       actorType: pendingState.actorType || (pendingState.employeeId ? 'employee' : 'line'),
       actorId: pendingState.actorId || pendingState.employeeId || null,
     });
+
+    const savedSlips = await savePendingDepositSlips(created, pendingState);
 
     setDepositState(actor, null);
 
@@ -369,8 +411,8 @@ async function handlePostback(event) {
           bankName: pendingState.bank || null,
           accountName: pendingState.bankAccountName || null,
           accountNo: pendingState.bankAccountNo || null,
-          slipCount: pendingState.slipUrls ? pendingState.slipUrls.length : (pendingState.slipUrl ? 1 : 0),
-          slipUrls: pendingState.slipUrls || (pendingState.slipUrl ? [pendingState.slipUrl] : []),
+          slipCount: savedSlips.slipCount,
+          slipUrls: savedSlips.slipUrls,
           submittedAt: pendingState.submittedAt,
           lineUserId: pendingState.lineUserId,
           messageText: pendingState.messageText,
@@ -408,7 +450,8 @@ async function handlePostback(event) {
         deposited_amount: pendingState.amount,
         bank: pendingState.bank || null,
         bank_short: pendingState.bankShort || null,
-        slip_url: pendingState.slipUrl || null,
+        bank_account_id: pendingState.bankAccountId || null,
+        slip_url: getLegacyDepositSlipUrls(pendingState)[0] || null,
         source: 'line',
         line_group_id: pendingState.lineGroupId,
         line_user_id: pendingState.lineUserId,
@@ -421,6 +464,7 @@ async function handlePostback(event) {
         actorType: pendingState.actorType || (pendingState.employeeId ? 'employee' : 'line'),
         actorId: pendingState.actorId || pendingState.employeeId || null,
       });
+      const savedSlips = await savePendingDepositSlips(created, pendingState);
       setDepositState(actor, null);
 
       if (created && created.line_group_id) {
@@ -434,8 +478,8 @@ async function handlePostback(event) {
             bankName: pendingState.bank || null,
             accountName: pendingState.bankAccountName || null,
             accountNo: pendingState.bankAccountNo || null,
-            slipCount: pendingState.slipUrls ? pendingState.slipUrls.length : (pendingState.slipUrl ? 1 : 0),
-            slipUrls: pendingState.slipUrls || (pendingState.slipUrl ? [pendingState.slipUrl] : []),
+            slipCount: savedSlips.slipCount,
+            slipUrls: savedSlips.slipUrls,
             submittedAt: pendingState.submittedAt,
             lineUserId: pendingState.lineUserId,
             messageText: pendingState.messageText,
@@ -494,6 +538,16 @@ async function handlePostback(event) {
       }
 
       await logEvent('deposit_verified_by_manager', { deposit_id: depositId, actor, verified_by: actorName, confirmed_by: actorInfo.confirmedByUsername || null });
+      await replyOrPush({
+        ...replyTarget,
+        messages: [depositFlex.depositApprovedFlex({
+          depositId: updated.id,
+          branchCode: deposit.branches ? (deposit.branches.code || deposit.branches.name) : deposit.branch_id,
+          amount: updated.deposited_amount || deposit.deposited_amount,
+          approvedBy: actorName,
+          approvedAt: formatThaiDateTime(updated.verified_at || payload.verified_at),
+        })],
+      });
       return true;
     }
 

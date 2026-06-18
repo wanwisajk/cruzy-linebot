@@ -29,7 +29,7 @@ const {
   clearReminderTimer,
 } = require('./state');
 
-const MISSING_IMAGE_TEXT = 'กรุณาแนบรูปหน้าร้านหลังปิดร้านเรียบร้อยแล้ว';
+const MISSING_IMAGE_TEXT = 'กรุณาแนบรูปหน้าร้านที่ปิดเรียบร้อยแล้ว (รูปถ่ายตอนร้านปิดไฟ ก่อนออกจากร้านเท่านั้น)';
 
 function isMissingColumnError(error) {
   const message = `${error && error.message || ''} ${error && error.details || ''}`;

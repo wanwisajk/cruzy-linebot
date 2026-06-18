@@ -160,14 +160,14 @@ function totalMismatchFlex({ cash, credit, transfer, calculatedTotal, enteredTot
 
 function managerApprovalFlex({ saleId }) {
   return bubble({
-    title: `⏳ ยอดขาย รออนุมัติ`,
+    title: `⏳ ยอดขายรออนุมัติ`,
     subtitle: `รายการ #${saleId}`,
     color: COLORS.ink,
     altText: `ยอดขาย #${saleId} รออนุมัติ`,
     body: [
       { 
         type: 'text', 
-        text: '👉 ตรวจสอบสรุปยอดขายด้านบน แล้วกดเลือกดำเนินการ:', 
+        text: 'ตรวจสอบสรุปยอดขาย แล้วกดเลือกดำเนินการ:', 
         size: 'sm', 
         color: COLORS.ink, 
         wrap: true 
