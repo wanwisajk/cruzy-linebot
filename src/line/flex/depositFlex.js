@@ -190,23 +190,6 @@ function depositSuccessFlex({ depositId, branchCode, bank, amount, slipCount }) 
   });
 }
 
-function depositApprovedFlex({ depositId, branchCode, amount, approvedBy, approvedAt }) {
-  return resultFlex({
-    title: '✅ อนุมัติยอดฝากแล้ว',
-    subtitle: `รายการ #${depositId}`,
-    statusLabel: 'อนุมัติแล้ว',
-    statusColor: COLORS.success,
-    altText: 'อนุมัติยอดฝากแล้ว',
-    rows: [
-      uiRow('Deposit ID', depositId),
-      uiRow('สาขา', branchCode || 'ไม่ระบุสาขา'),
-      uiRow('ยอดฝาก', `${Number(amount || 0).toLocaleString()} บาท`, COLORS.success),
-      uiRow('อนุมัติโดย', approvedBy || 'ผู้จัดการ'),
-      uiRow('เวลาอนุมัติ', approvedAt || 'ไม่ระบุเวลา'),
-    ],
-  });
-}
-
 function depositApprovedResultFlex({ id, branchCode, depositDate, depositedAmount, verifiedBy, verifiedAt, slipCount = 0 }) {
   return resultFlex({
     title: '✅ ยอดฝากได้รับการอนุมัติ',
@@ -271,7 +254,6 @@ module.exports = {
   depositConfirmFlex,
   managerApprovalFlex,
   depositSuccessFlex,
-  depositApprovedFlex,
   depositApprovedResultFlex,
   depositNoticeFlex,
   depositRejectedFlex,

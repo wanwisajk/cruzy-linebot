@@ -12,6 +12,9 @@ const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./flows/de
 const { recordDeposit, saveDepositSlipAttachments } = require('./flows/deposit/service');
 const { getDisplayName } = require('./utils/displayName');
 
+const BANGKOK_TIME_ZONE = 'Asia/Bangkok';
+const TH_GREGORY_LOCALE = 'th-TH-u-ca-gregory-nu-latn';
+
 async function fetchSaleById(saleId) {
   const { data, error } = await supabase
     .from('sales')
@@ -45,7 +48,8 @@ function getReplyTarget(event) {
 function formatThaiDateTime(dateValue) {
   if (!dateValue) return 'ไม่ระบุเวลา';
 
-  return new Date(dateValue).toLocaleString('th-TH', {
+  return new Date(dateValue).toLocaleString(TH_GREGORY_LOCALE, {
+    timeZone: BANGKOK_TIME_ZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -141,7 +145,7 @@ async function resolveApprovalActor(event) {
 function formatBangkokTime(dateValue) {
   const date = dateValue ? new Date(dateValue) : new Date();
   return date.toLocaleTimeString('en-GB', {
-    timeZone: 'Asia/Bangkok',
+    timeZone: BANGKOK_TIME_ZONE,
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
@@ -540,13 +544,7 @@ async function handlePostback(event) {
       await logEvent('deposit_verified_by_manager', { deposit_id: depositId, actor, verified_by: actorName, confirmed_by: actorInfo.confirmedByUsername || null });
       await replyOrPush({
         ...replyTarget,
-        messages: [depositFlex.depositApprovedFlex({
-          depositId: updated.id,
-          branchCode: deposit.branches ? (deposit.branches.code || deposit.branches.name) : deposit.branch_id,
-          amount: updated.deposited_amount || deposit.deposited_amount,
-          approvedBy: actorName,
-          approvedAt: formatThaiDateTime(updated.verified_at || payload.verified_at),
-        })],
+        messages: [{ type: 'text', text: 'บันทึกอนุมัติยอดฝากแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }],
       });
       return true;
     }

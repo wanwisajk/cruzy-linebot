@@ -10,21 +10,43 @@ const { inspectionResultFlex } = require('../flex/inspectFlex');
 const { getDisplayName } = require('../utils/displayName');
 
 let running = false;
+const BANGKOK_TIME_ZONE = 'Asia/Bangkok';
+const TH_GREGORY_LOCALE = 'th-TH-u-ca-gregory-nu-latn';
+
+function bangkokDateParts(date = new Date()) {
+  const value = date instanceof Date ? date : new Date(date);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BANGKOK_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+
+  const partMap = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(partMap.year),
+    month: Number(partMap.month),
+    day: Number(partMap.day),
+  };
+}
 
 function localDateString(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const parts = bangkokDateParts(date);
+  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
 }
 
 function monthStart(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-01`;
+  const parts = bangkokDateParts(date);
+  return `${parts.year}-${pad(parts.month)}-01`;
 }
 
 function isLastDayOfMonth(date = new Date()) {
-  const next = new Date(date);
-  next.setDate(date.getDate() + 1);
-  return next.getDate() === 1;
+  const parts = bangkokDateParts(date);
+  const bangkokNoonUtc = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12));
+  bangkokNoonUtc.setUTCDate(bangkokNoonUtc.getUTCDate() + 1);
+  return bangkokDateParts(bangkokNoonUtc).day === 1;
 }
 
 async function push(to, message) {
@@ -254,13 +276,27 @@ async function sendLeaveResults() {
 function formatThaiDate(value) {
   if (!value) return '-';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString('th-TH');
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString(TH_GREGORY_LOCALE, {
+    timeZone: BANGKOK_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
 }
 
 function formatThaiDateTime(value) {
   if (!value) return '-';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('th-TH');
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString(TH_GREGORY_LOCALE, {
+    timeZone: BANGKOK_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
 }
 
 async function notifySalesResults() {
@@ -342,9 +378,9 @@ async function notifyCashDepositResults() {
     if (!groupId) continue;
 
     const branchCode = deposit.branches ? (deposit.branches.code || deposit.branches.name) : '-';
-    const depositDate = deposit.deposit_date ? new Date(deposit.deposit_date).toLocaleDateString('th-TH') : '-';
+    const depositDate = formatThaiDate(deposit.deposit_date);
     const verifiedBy = getDisplayName(deposit.verified_by);
-    const verifiedAt = deposit.verified_at ? new Date(deposit.verified_at).toLocaleString('th-TH') : '-';
+    const verifiedAt = formatThaiDateTime(deposit.verified_at);
     const attachmentCount = await countAttachments('cash_deposit', deposit.id);
     const slipCount = attachmentCount || (deposit.slip_url ? 1 : 0);
 

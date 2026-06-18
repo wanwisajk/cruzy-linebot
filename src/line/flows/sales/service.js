@@ -59,7 +59,19 @@ async function createDraftSale({
 }
 
 async function updateSaleStatus(saleId, status) {
-  const { data, error } = await supabase.from('sales').update({ status }).eq('id', saleId).select('*').single();
+  const payload = { status };
+  if (status === 'confirmed' || status === 'rejected') {
+    payload.line_notified = false;
+  }
+
+  let { data, error } = await supabase.from('sales').update(payload).eq('id', saleId).select('*').single();
+  if (error && isMissingColumnError(error)) {
+    const fallbackPayload = { ...payload };
+    delete fallbackPayload.line_notified;
+    const retry = await supabase.from('sales').update(fallbackPayload).eq('id', saleId).select('*').single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw error;
 
   await logEvent('sales_status_updated', { sale_id: saleId, status });
@@ -79,6 +91,8 @@ async function updateSaleStatusWithTimestamp(saleId, status, options = {}) {
 
   if (typeof options.lineNotified === 'boolean') {
     payload.line_notified = options.lineNotified;
+  } else if (status === 'confirmed' || status === 'rejected') {
+    payload.line_notified = false;
   }
 
   let { data, error } = await supabase.from('sales').update(payload).eq('id', saleId).select('*').single();
