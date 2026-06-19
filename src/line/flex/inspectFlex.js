@@ -81,6 +81,8 @@ function normalizeAttachmentItems({ attachments, attachmentUrls }) {
         const source = String(metadata.source || '');
         const isOpeningPhoto = source === 'opening_general' || /open_shop/i.test(`${fileName} ${storagePath}`);
         const isClosingPhoto = source === 'closing_general' || /close_shop/i.test(`${fileName} ${storagePath}`);
+        if (isOpeningPhoto) return null;
+
         const label = isOpeningPhoto
           ? 'รูปเปิดร้าน'
           : isClosingPhoto

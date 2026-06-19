@@ -40,6 +40,18 @@ function buildInspectionDetailUrl(inspection) {
   return `${path}?${query.toString()}`;
 }
 
+function isLineUriActionSafe(uri) {
+  const value = String(uri || '').trim();
+  return /^https?:\/\//i.test(value) && value.length <= 1000;
+}
+
+function filterLineSafeAttachments(attachments = []) {
+  return (attachments || []).filter((attachment) => {
+    const uri = attachment && (attachment.file_url || attachment.url || attachment.uri);
+    return isLineUriActionSafe(uri);
+  });
+}
+
 function bangkokDateParts(date = new Date()) {
   const value = date instanceof Date ? date : new Date(date);
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -494,12 +506,20 @@ async function notifyPendingLiffInspections() {
 
     const branchCode = inspection.branches ? (inspection.branches.code || inspection.branches.name) : inspection.branch_id;
     const submitterName = getDisplayName(inspection.employees);
+    const lineSafeAttachments = filterLineSafeAttachments(attachments || []);
+    if ((attachments || []).length !== lineSafeAttachments.length) {
+      console.warn('Filtered LINE-unsafe inspection attachment URLs:', {
+        inspection_id: inspection.id,
+        total: (attachments || []).length,
+        safe: lineSafeAttachments.length,
+      });
+    }
     const pendingFlex = inspectionPendingFlex({
       inspectionId: inspection.id,
       branchCode,
       submitterName,
       photoCount: inspection.photo_count || (attachments || []).length,
-      attachments: attachments || [],
+      attachments: lineSafeAttachments,
       workDate: inspection.work_date,
       submitTime: inspection.submit_time,
       detailUri: buildInspectionDetailUrl(inspection),
