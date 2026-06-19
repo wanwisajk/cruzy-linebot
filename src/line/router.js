@@ -91,7 +91,7 @@ async function handleEvent(event) {
       return replyOrPush({ replyToken: event.replyToken, messages: [commandFlex()] });
     }
 
-    if (/^สาขา\s+\d+$/i.test(text.trim())) {
+    if (/^สาขา\s+[A-Za-z][A-Za-z0-9_-]{1,15}$/i.test(text.trim())) {
       console.log('🔗 Routing to branch LINE group link');
       return linkHandler.handleBranchLink(event);
     }

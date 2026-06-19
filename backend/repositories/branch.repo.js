@@ -56,9 +56,25 @@ async function updateLineGroupId(id, lineGroupId) {
   return data;
 }
 
+async function updateLineGroupIdByCode(code, lineGroupId) {
+  const { data, error } = await supabase
+    .from('branches')
+    .update({ line_group_id: lineGroupId })
+    .ilike('code', code)
+    .select('id,name,code,line_group_id')
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
 module.exports = {
   findAllWithRegions,
   findByCode,
   findByLineGroupId,
   updateLineGroupId,
+  updateLineGroupIdByCode,
 };

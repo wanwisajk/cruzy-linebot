@@ -78,7 +78,7 @@ async function handle(event) {
     workDate,
   });
   if (!branch) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <id> หรือพิมพ์เช่น ปิดร้าน CCA 20:00' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <ตัวย่อสาขา> เช่น สาขา CCA หรือพิมพ์เช่น ปิดร้าน CCA 20:00' }] });
     return;
   }
 

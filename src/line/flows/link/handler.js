@@ -5,7 +5,7 @@ const { logEvent } = require('../../utils/audit');
 
 async function handleBranchLink(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
-  const match = text.match(/^สาขา\s+(\d+)$/i);
+  const match = text.match(/^สาขา\s+([A-Za-z][A-Za-z0-9_-]{1,15})$/i);
   const groupId = event.source && event.source.groupId;
 
   if (!groupId) {
@@ -14,15 +14,22 @@ async function handleBranchLink(event) {
   }
 
   if (!match) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: สาขา <รหัส id สาขา>' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: สาขา <ตัวย่อสาขา> เช่น สาขา CCA' }] });
     return;
   }
 
-  const branch = await branchRepo.updateLineGroupId(match[1], groupId);
-  await logEvent('branch_line_group_linked', { branch_id: branch.id, line_group_id: groupId });
+  const branchCode = match[1].toUpperCase();
+  const branch = await branchRepo.findByCode(branchCode);
+  if (!branch) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ไม่พบสาขารหัส ${branchCode}` }] });
+    return;
+  }
+
+  const linked = await branchRepo.updateLineGroupIdByCode(branchCode, groupId);
+  await logEvent('branch_line_group_linked', { branch_id: linked.id, branch_code: linked.code, line_group_id: groupId });
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [{ type: 'text', text: `ผูกกลุ่ม LINE กับสาขา ${branch.code} สำเร็จ` }],
+    messages: [{ type: 'text', text: `ผูกกลุ่ม LINE กับสาขา ${linked.code} สำเร็จ` }],
   });
 }
 

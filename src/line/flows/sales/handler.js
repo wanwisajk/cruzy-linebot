@@ -78,7 +78,7 @@ async function handleTextMessage(event) {
     await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
       title: 'ไม่พบสาขา',
       subtitle: 'กรุณากำหนดสาขากลุ่มก่อน',
-      message: 'สาขายังไม่ถูกผูกกับกลุ่มนี้ โปรดใช้คำสั่ง: สาขา <id> หรือพิมพ์ ยอดขาย CCA',
+      message: 'สาขายังไม่ถูกผูกกับกลุ่มนี้ โปรดใช้คำสั่ง: สาขา <ตัวย่อสาขา> เช่น สาขา CCA หรือพิมพ์ ยอดขาย CCA',
       buttonLabel: 'สาขา CCA',
       buttonText: 'สาขา CCA',
       color: '#EA580C',
