@@ -1,7 +1,15 @@
 const { supabase } = require('../../../../backend/config/supabase');
+const { lineClient } = require('../../../../backend/config/line');
 const leaveFlex = require('../../flex/leaveFlex');
 const { replyOrPush } = require('../../reply');
-const { createLeave, uploadLeaveAttachment } = require('./service');
+const {
+  createLeave,
+  uploadLeaveAttachment,
+  fetchLeaveById,
+  fetchLatestPendingLeaveForEmployee,
+  countLeaveAttachments,
+  findAreaApproversForLeave,
+} = require('./service');
 const { logEvent } = require('../../utils/audit');
 const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
@@ -34,9 +42,17 @@ function employeeDisplayName(employee) {
   return getDisplayName(employee);
 }
 
+function leaveEmployeeName(leave) {
+  return getDisplayName(leave && leave.employees, leave && leave.line_user_id);
+}
+
+function leaveBranchCode(leave) {
+  return leave && leave.branches ? (leave.branches.code || leave.branches.name) : '-';
+}
+
 function parseTargetEmployeeId(text) {
   const raw = String(text || '').trim();
-  const match = raw.match(/(?:พนักงาน|employee|emp)\s*#?\s*(\d+)/i) || raw.match(/^(?:ลา|ขอลา)\s+#?\s*(\d+)\b/i);
+  const match = raw.match(/(?:พนักงาน|employee|emp)\s*#?\s*(\d+)/i);
   return match ? match[1] : null;
 }
 
@@ -135,25 +151,120 @@ async function handle(event) {
   const state = stateKey ? getLeaveState(stateKey) : null;
 
   if (!isPrivateEvent(event)) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
-      title: 'คำสั่งขอลาในส่วนตัวเท่านั้น',
-      message: 'ขอลาใช้งานได้เฉพาะแชทส่วนตัวกับบอทเท่านั้น กรุณาพิมพ์ "ขอลา" ในแชทส่วนตัว',
-      buttonLabel: 'ขอลา',
-      buttonText: 'ขอลา',
-      color: '#2563EB',
-      altText: 'ขอลาในแชทส่วนตัวเท่านั้น',
-    })] });
     return null;
   }
 
   if (lower === 'ยกเลิก') return cancelLeave(event);
+  if (/^(ติดตามสถานะ|เช็คสถานะ|ตรวจสถานะ|สถานะลา|ติดตามลา)$/i.test(text)) return trackLeaveStatus(event);
   if (lower === 'เสร็จ' || lower === 'ข้าม') return finishAttachments(event, lower === 'ข้าม');
   if (lower === 'ยืนยันส่ง') return submitLeave(event);
   if (state && state.status === LEAVE_STATUS.AWAITING_DETAILS) return receiveDetails(event);
   if (LEAVE_TYPES.includes(text)) return selectLeaveType(event, text);
-  if (/^(ลา|ขอลา)$/i.test(text)) return startLeave(event);
+  if (/^ขอลา$/i.test(text)) return startLeave(event);
 
-  return startLeave(event);
+  return null;
+}
+
+async function buildLeaveApprovalMessage(leave) {
+  const attachmentCount = await countLeaveAttachments(leave.id);
+  return leaveFlex.leaveApprovalFlex({
+    id: leave.id,
+    employeeName: leaveEmployeeName(leave),
+    branchCode: leaveBranchCode(leave),
+    type: leave.leave_type,
+    from: leave.start_date,
+    to: leave.end_date,
+    reason: leave.reason,
+    attachmentCount,
+    approveData: `leave_action|${leave.id}|approve`,
+    rejectData: `leave_action|${leave.id}|reject`,
+  });
+}
+
+async function notifyLeaveApprovers(leave, options = {}) {
+  if (!leave || leave.status !== 'pending') {
+    return { sent: 0, approvers: [] };
+  }
+
+  const approvers = await findAreaApproversForLeave(leave);
+  const message = await buildLeaveApprovalMessage(leave);
+  let sent = 0;
+
+  for (const approver of approvers) {
+    if (!approver.line_user_id) continue;
+    try {
+      await lineClient.pushMessage({ to: approver.line_user_id, messages: [message] });
+      sent += 1;
+    } catch (err) {
+      console.warn('Leave approval push failed:', err.message || err, {
+        leaveId: leave.id,
+        approverId: approver.id,
+        lineUserId: approver.line_user_id,
+      });
+    }
+  }
+
+  await logEvent(options.action || 'leave_approval_requested', {
+    leaveId: leave.id,
+    approver_count: approvers.length,
+    sent_count: sent,
+  });
+
+  return { sent, approvers };
+}
+
+async function trackLeaveStatus(event) {
+  const source = event.source || {};
+  const lineUserId = source.userId || null;
+  if (!lineUserId || !isPrivateEvent(event)) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'เช็คสถานะคำขอลาได้ในแชทส่วนตัวกับบอทเท่านั้น' }] });
+    return true;
+  }
+
+  const actor = await resolveLineActor(lineUserId);
+  if (!actor || !actor.employee) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
+      title: 'ยังไม่พบพนักงาน',
+      message: 'กรุณาผูก LINE กับพนักงานก่อนเช็คสถานะคำขอลา',
+      buttonLabel: 'วิธีผูก',
+      buttonText: 'พนักงาน <รหัสพนักงาน>',
+      color: '#B91C1C',
+      altText: 'ยังไม่พบพนักงาน',
+    })] });
+    return true;
+  }
+
+  const leave = await fetchLatestPendingLeaveForEmployee(actor.employee.id);
+  if (!leave) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
+      title: 'ไม่พบคำขอลาที่รออนุมัติ',
+      message: 'ตอนนี้ไม่มีคำขอลาที่ยังรออนุมัติอยู่ หากต้องการขอลาใหม่ให้พิมพ์ "ขอลา"',
+      buttonLabel: 'ขอลา',
+      buttonText: 'ขอลา',
+      color: '#64748B',
+      altText: 'ไม่พบคำขอลาที่รออนุมัติ',
+    })] });
+    return true;
+  }
+
+  const attachmentCount = await countLeaveAttachments(leave.id);
+  const approvers = await findAreaApproversForLeave(leave);
+  await replyOrPush({
+    replyToken: event.replyToken,
+    messages: [leaveFlex.leaveStatusFlex({
+      id: leave.id,
+      employeeName: leaveEmployeeName(leave),
+      branchCode: leaveBranchCode(leave),
+      type: leave.leave_type,
+      from: leave.start_date,
+      to: leave.end_date,
+      reason: leave.reason,
+      status: leave.status,
+      attachmentCount,
+      approverCount: approvers.length,
+    })],
+  });
+  return true;
 }
 
 async function startLeave(event) {
@@ -166,7 +277,7 @@ async function startLeave(event) {
       title: 'ไม่พบ LINE user id',
       message: 'ระบบไม่พบรหัส LINE ของคุณสำหรับการขอลา กรุณาลองใหม่ในแชทนี้หรือรีสตาร์ทบอท',
       buttonLabel: 'เริ่มใหม่',
-      buttonText: 'ลา',
+      buttonText: 'ขอลา',
       color: '#B91C1C',
       altText: 'ไม่พบ LINE user id',
     })] });
@@ -236,8 +347,15 @@ async function selectLeaveType(event, type) {
     leaveType: type,
   });
 
-  await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.leaveDetailPromptFlex({ type })] });
-  return true;
+await replyOrPush({ 
+  replyToken: event.replyToken, 
+  messages: [
+    { 
+      type: 'text', 
+      text: leaveFlex.leaveDetailPromptText({ type }) 
+    }
+  ] 
+});  return true;
 }
 
 async function receiveDetails(event) {
@@ -248,8 +366,19 @@ async function receiveDetails(event) {
 
   const parsed = parseLeaveDetails(text);
   if (!parsed.startDate || !parsed.endDate || !parsed.reason) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.leaveDetailPromptFlex({ type: state.leaveType })] });
-    return null;
+await replyOrPush({ 
+  replyToken: event.replyToken, 
+  messages: [
+    { 
+      type: 'text', 
+      text: leaveFlex.leaveDetailPromptText({ type: state.leaveType }) 
+    },
+    {
+      type: 'text',
+      text:    `💡 คัดลอกข้อความตัวอย่างด้านบน แก้ไขข้อมูล แล้วพิมพ์ส่งกลับมาได้เลยครับ`
+    }
+  ] 
+});    return null;
   }
 
   const { branch, lineGroupId } = await resolveLeaveBranch(event, text, state.employeeId, parsed.startDate);
@@ -385,7 +514,24 @@ async function submitLeave(event) {
     attachment_count: uploaded.length || (state.attachments || []).length,
   });
 
+  const leave = await fetchLeaveById(created.id);
+  const notified = await notifyLeaveApprovers(leave);
   setLeaveState(stateKey, null);
+  await replyOrPush({
+    replyToken: event.replyToken,
+    messages: [leaveFlex.leaveStatusFlex({
+      id: leave.id,
+      employeeName: leaveEmployeeName(leave),
+      branchCode: leaveBranchCode(leave),
+      type: leave.leave_type,
+      from: leave.start_date,
+      to: leave.end_date,
+      reason: leave.reason,
+      status: leave.status,
+      attachmentCount: uploaded.length || (state.attachments || []).length,
+      approverCount: notified.approvers.length,
+    })],
+  });
   return true;
 }
 
@@ -396,7 +542,7 @@ async function cancelLeave(event) {
     title: 'ยกเลิกคำขอ',
     message: 'ยกเลิกคำขอลาแล้ว',
     buttonLabel: 'เริ่มใหม่',
-    buttonText: 'ลา',
+    buttonText: 'ขอลา',
     color: '#6B7280',
     altText: 'ยกเลิกคำขอ',
   })] });
@@ -406,4 +552,5 @@ async function cancelLeave(event) {
 module.exports = {
   handle,
   handleAttachmentMessage,
+  notifyLeaveApprovers,
 };

@@ -1,10 +1,11 @@
 const { lineClient } = require('../../backend/config/line');
 const { supabase } = require('../../backend/config/supabase');
-const { updateLeaveStatus } = require('./flows/leave/service');
+const { updateLeaveStatus, fetchLeaveById, countLeaveAttachments } = require('./flows/leave/service');
 const { updateSaleStatusWithTimestamp } = require('./flows/sales/service');
 const { replyOrPush } = require('./reply');
 const { logEvent } = require('./utils/audit');
 const depositFlex = require('./flex/depositFlex');
+const leaveFlex = require('./flex/leaveFlex');
 const { resolveLineActor } = require('./utils/actor');
 const { fetchInspectionById, updateInspectionReview } = require('./flows/inspect/service');
 const { inspectionPendingFlex } = require('./flex/inspectFlex');
@@ -66,6 +67,14 @@ function getSaleBranchCode(sale) {
     sale.branch_id ||
     'ไม่ระบุสาขา'
   );
+}
+
+function leaveEmployeeName(leave) {
+  return getDisplayName(leave && leave.employees, leave && leave.line_user_id);
+}
+
+function leaveBranchCode(leave) {
+  return leave && leave.branches ? (leave.branches.code || leave.branches.name) : '-';
 }
 
 async function fetchMatchingUsername(employee) {
@@ -304,7 +313,51 @@ async function handlePostback(event) {
     return true;
   }
 
-  // leave_action|<id>|approve
+  // leave_follow|<id>
+  if (normalizedData.startsWith('leave_follow|')) {
+    const parts = normalizedData.split('|');
+    const leaveId = parts[1];
+    const replyTarget = getReplyTarget(event);
+    const leave = await fetchLeaveById(leaveId);
+
+    if (!leave) {
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'ไม่พบคำขอลานี้' }] });
+      return true;
+    }
+
+    if (leave.status !== 'pending') {
+      const attachmentCount = await countLeaveAttachments(leave.id);
+      await replyOrPush({
+        ...replyTarget,
+        messages: [leaveFlex.leaveResultFlex({
+          id: leave.id,
+          employeeName: leaveEmployeeName(leave),
+          type: leave.leave_type,
+          from: leave.start_date,
+          to: leave.end_date,
+          status: leave.status,
+          approvedBy: getDisplayName({ name: leave.audit_actor_name }, { username: leave.decided_by }, leave.decided_by),
+          attachmentCount,
+        })],
+      });
+      return true;
+    }
+
+    const leaveHandler = require('./flows/leave/handler');
+    const notified = await leaveHandler.notifyLeaveApprovers(leave, { action: 'leave_approval_followed_up' });
+
+    await replyOrPush({
+      ...replyTarget,
+      messages: [{
+        type: 'text',
+        text: notified.sent > 0
+          ? `ส่งแจ้งเตือนผู้อนุมัติอีกครั้งแล้ว ${notified.sent} คน`
+          : 'ยังไม่พบผู้อนุมัติ area ที่ผูก LINE สำหรับสาขานี้',
+      }],
+    });
+    return true;
+  }
+
   if (normalizedData.startsWith('leave_action|')) {
     const parts = normalizedData.split('|');
     const leaveId = parts[1];

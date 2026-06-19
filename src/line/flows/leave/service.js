@@ -2,6 +2,12 @@ const { supabase } = require('../../../../backend/config/supabase');
 const { blobClient } = require('../../../../backend/config/line');
 const { logEvent } = require('../../utils/audit');
 
+const LEAVE_SELECT = `
+  *,
+  employees(id,name,nickname,line_user_id,regions(name)),
+  branches(id,name,code,line_group_id,region_id,regions(id,name))
+`;
+
 function isMissingColumnError(error) {
   const message = `${error && error.message || ''} ${error && error.details || ''}`;
   return error && (error.code === 'PGRST204' || /column|schema cache/i.test(message));
@@ -151,4 +157,87 @@ async function updateLeaveStatus(leaveId, status, actor, options = {}) {
   return data;
 }
 
-module.exports = { createLeave, updateLeaveStatus, uploadLeaveAttachment };
+async function fetchLeaveById(leaveId) {
+  const { data, error } = await supabase
+    .from('leaves')
+    .select(LEAVE_SELECT)
+    .eq('id', leaveId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function fetchLatestPendingLeaveForEmployee(employeeId) {
+  if (!employeeId) return null;
+
+  const { data, error } = await supabase
+    .from('leaves')
+    .select(LEAVE_SELECT)
+    .eq('employee_id', employeeId)
+    .eq('status', 'pending')
+    .order('submitted_at', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function countLeaveAttachments(leaveId) {
+  if (!leaveId) return 0;
+
+  const { count, error } = await supabase
+    .from('attachments')
+    .select('id', { count: 'exact', head: true })
+    .eq('entity_type', 'leave')
+    .eq('entity_id', leaveId);
+
+  if (error) {
+    console.warn('Unable to count leave attachments:', error.message || error, { leaveId });
+    return 0;
+  }
+
+  return count || 0;
+}
+
+function buildAreaScopeValues(leave) {
+  const branch = leave && leave.branches;
+  const region = branch && branch.regions;
+  return [
+    region && region.id,
+    region && region.name,
+    branch && branch.region_id,
+  ].filter((value) => value !== null && value !== undefined && String(value).trim() !== '')
+    .map((value) => String(value).trim());
+}
+
+async function findAreaApproversForLeave(leave) {
+  const scopeValues = buildAreaScopeValues(leave);
+  if (scopeValues.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('id,username,name,role,scope_type,scope_value,line_user_id')
+    .not('line_user_id', 'is', null)
+    .ilike('role', 'area')
+    .in('scope_value', scopeValues);
+
+  if (error) throw error;
+
+  return (data || []).filter((user) => {
+    const scopeType = String(user.scope_type || '').toLowerCase();
+    return ['province', 'จังหวัด', 'region', 'area'].some((value) => scopeType.includes(value));
+  });
+}
+
+module.exports = {
+  createLeave,
+  updateLeaveStatus,
+  uploadLeaveAttachment,
+  fetchLeaveById,
+  fetchLatestPendingLeaveForEmployee,
+  countLeaveAttachments,
+  findAreaApproversForLeave,
+};

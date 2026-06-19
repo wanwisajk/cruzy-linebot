@@ -28,6 +28,10 @@ function isCloseShopCommand(text) {
   return /ปิด\s*ร้าน/i.test(text) || /ปิด้ราน/i.test(text) || /ปิดราน/i.test(text);
 }
 
+function isLeaveTypeText(text) {
+  return ['ลาป่วย', 'ลากิจ', 'ลาพักร้อน', 'ลาประจำปี'].includes(String(text || '').trim());
+}
+
 function getScopedStateKeys(source = {}) {
   return [source.groupId, source.roomId, source.userId].filter(Boolean);
 }
@@ -117,6 +121,17 @@ async function handleEvent(event) {
       return employeeHandler.handleAttendanceAlert(event);
     }
 
+    if (/^(ติดตามสถานะ|เช็คสถานะ|ตรวจสถานะ|สถานะลา|ติดตามลา)$/i.test(String(text || '').trim())) {
+      if (!isPrivateEvent(event)) {
+        return replyOrPush({
+          replyToken: event.replyToken,
+          messages: [{ type: 'text', text: 'เช็คสถานะคำขอลา กรุณาพิมพ์ในแชทส่วนตัวกับบอท' }],
+        });
+      }
+      console.log('🏖️ Routing to leave status tracking');
+      return leaveHandler.handle(event);
+    }
+
     if (isOpenShopCommand(text)) {
       console.log('🚪 Routing to open shop handler');
       return openHandler.handle(event);
@@ -132,7 +147,14 @@ async function handleEvent(event) {
       event.source.userId &&
       isPrivateEvent(event) &&
       hasLeaveState(event.source.userId) &&
-      (lower === 'เสร็จ' || lower === 'ข้าม' || lower === 'ยืนยันส่ง' || lower === 'ยกเลิก' || lower.includes('วันที่เริ่มลา'))
+      (
+        lower === 'เสร็จ' ||
+        lower === 'ข้าม' ||
+        lower === 'ยืนยันส่ง' ||
+        lower === 'ยกเลิก' ||
+        lower.includes('วันที่เริ่มลา') ||
+        isLeaveTypeText(text)
+      )
     ) {
       console.log('🏖️ Routing to active leave flow');
       return leaveHandler.handle(event);
@@ -191,13 +213,8 @@ if (
       return depositHandler.handle(event);
     }
 
-    if (lower.includes('ขอลา') || lower.includes('ลา')) {
-      if (!isPrivateEvent(event)) {
-        return replyOrPush({
-          replyToken: event.replyToken,
-          messages: [{ type: 'text', text: 'คำสั่งขอลา กรุณาพิมพ์ในแชทส่วนตัวกับบอท'}],
-        });
-      }
+    if (lower === 'ขอลา') {
+      if (!isPrivateEvent(event)) return null;
       console.log('🏖️ Routing to leave handler');
       return leaveHandler.handle(event);
     }
