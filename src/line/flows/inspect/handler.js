@@ -12,6 +12,7 @@ const {
   syncInspectionPhotoCount,
 } = require('./service');
 const {
+  inspectionLiffEntryFlex,
   inspectionSummaryFlex,
   inspectionPendingFlex,
 } = require('../../flex/inspectFlex');
@@ -22,6 +23,8 @@ const { resolveBranchFromEvent } = require('../../utils/context');
 const { parseDateFromText, parseTimeFromText } = require('../../utils/attendance');
 const { logEvent } = require('../../utils/audit');
 const { getDisplayName } = require('../../utils/displayName');
+
+const DEFAULT_INSPECTION_LIFF_URL = 'https://liff.line.me/2010334830-E2aZbMzY';
 
 function getStateKey(event) {
   const source = event.source || {};
@@ -34,6 +37,29 @@ function getEventDate(event) {
 
 function getSubmitterName(actor, lineUserId) {
   return getDisplayName(actor && actor.employee, actor && actor.user, actor && actor.name, lineUserId);
+}
+
+function inspectionLiffBaseUrl() {
+  return String(
+    process.env.LIFF_INSPECTION_URL ||
+    DEFAULT_INSPECTION_LIFF_URL
+  ).replace(/\/+$/, '');
+}
+
+function buildInspectionLiffUrl({ branchId, employeeId, workDate, lineUserId, branchCode }) {
+  const baseUrl = inspectionLiffBaseUrl();
+  if (!baseUrl) return null;
+  const path = baseUrl.includes('liff.line.me/') || baseUrl.endsWith('/liff/inspection')
+    ? baseUrl
+    : `${baseUrl}/liff/inspection`;
+  const query = new URLSearchParams({
+    branchId: String(branchId),
+    employeeId: String(employeeId),
+    date: String(workDate),
+  });
+  if (lineUserId) query.set('lineUserId', String(lineUserId));
+  if (branchCode) query.set('branchCode', String(branchCode));
+  return `${path}?${query.toString()}`;
 }
 
 async function handle(event) {
@@ -96,38 +122,31 @@ async function startInspection(event) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ยังไม่ได้เปิดร้านของวันที่ ${workDate} กรุณาพิมพ์ “เปิดร้าน ${branch.code}” ก่อน แล้วค่อยพิมพ์ “ตรวจร้าน” เพื่อส่งรูป` }] });
     return null;
   }
-  const openingAttachments = await listInspectionAttachments(openingInspection.id);
-  const openingPhotoCount = Math.max(
-    openingAttachments.length,
-    Number(openingInspection.photo_count || 0),
-    openingInspection.inspection_items && openingInspection.inspection_items.shopfront_image ? 1 : 0
-  );
-
-  setInspectionState(stateKey, {
-    status: INSPECTION_STATUS.COLLECTING_PHOTOS,
-    inspectionId: openingInspection.id,
-    openingPhotoCount,
-    openingAttachments,
-    openingAttachmentUrls: openingAttachments.map((attachment) => attachment.file_url).filter(Boolean),
+  const submitterName = getSubmitterName(actor, lineUserId);
+  const liffUrl = buildInspectionLiffUrl({
     branchId: branch.id,
-    branchCode: branch.code,
-    employeeId: actor.employee ? actor.employee.id : null,
-    submitterName: getSubmitterName(actor, lineUserId),
-    actorType: actor.user && actor.employeeResolvedBy === 'user_identity' ? 'user' : actor.type,
-    actorId: actor.user && actor.employeeResolvedBy === 'user_identity' ? actor.user.id : actor.id,
-    actorName: getDisplayName(actor.employee, actor.user, actor.name, lineUserId),
-    lineGroupId,
-    lineUserId,
+    employeeId: actor.employee.id,
     workDate,
-    submitTime,
-    submittedAt: eventTime.toISOString(),
-    messageText: text,
-    imageMessages: [],
+    lineUserId,
+    branchCode: branch.code,
   });
+
+  if (!liffUrl) {
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'ยังไม่ได้ตั้งค่า LIFF_URL หรือ LIFF_INSPECTION_URL สำหรับเปิดหน้าตรวจร้าน' }],
+    });
+    return null;
+  }
 
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [{ type: 'text', text: 'เริ่มตรวจร้านแล้ว ส่งรูปได้เลย เมื่อครบแล้วพิมพ์ “ตรวจเสร็จ”' }],
+    messages: [inspectionLiffEntryFlex({
+      branchCode: branch.code,
+      submitterName,
+      workDate,
+      uri: liffUrl,
+    })],
   });
   return true;
 }

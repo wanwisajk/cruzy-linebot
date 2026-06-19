@@ -273,6 +273,10 @@ async function uploadOpenAttachment({ inspectionId, messageId, inspectionItems }
       file_name: fileName,
       file_type: 'image/jpeg',
       file_size: buffer.byteLength,
+      metadata: {
+        source: 'opening_general',
+        lineMessageId: messageId,
+      },
     }])
     .select('*')
     .single();

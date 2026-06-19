@@ -69,7 +69,7 @@ function leaveDetailPromptText({ type }) {
   return `📝 กรอกข้อมูลวันลา${leaveTypeLabel}\n` +
          `วันที่เริ่มลา: \n` +
          `วันที่สิ้นสุด: \n` +
-         `เหตุผล: \n` 
+         `เหตุผล: ` 
       ;
 }
 

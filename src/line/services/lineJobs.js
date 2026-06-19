@@ -6,12 +6,35 @@ const alertFlex = require('../flex/alertFlex');
 const leaveFlex = require('../flex/leaveFlex');
 const { approvedSalesResultFlex } = require('../flex/salesFlex');
 const depositFlex = require('../flex/depositFlex');
-const { inspectionResultFlex } = require('../flex/inspectFlex');
+const { inspectionPendingFlex, inspectionResultFlex } = require('../flex/inspectFlex');
 const { getDisplayName } = require('../utils/displayName');
+const userRepo = require('../../../backend/repositories/user.repo');
 
 let running = false;
 const BANGKOK_TIME_ZONE = 'Asia/Bangkok';
 const TH_GREGORY_LOCALE = 'th-TH-u-ca-gregory-nu-latn';
+const DEFAULT_INSPECTION_LIFF_URL = 'https://liff.line.me/2010334830-E2aZbMzY';
+
+function inspectionLiffBaseUrl() {
+  return String(process.env.LIFF_INSPECTION_URL || DEFAULT_INSPECTION_LIFF_URL).replace(/\/+$/, '');
+}
+
+function buildInspectionDetailUrl(inspection) {
+  const baseUrl = inspectionLiffBaseUrl();
+  if (!baseUrl || !inspection) return null;
+  const path = baseUrl.includes('liff.line.me/') || baseUrl.endsWith('/liff/inspection')
+    ? baseUrl
+    : `${baseUrl}/liff/inspection`;
+  const query = new URLSearchParams({
+    branchId: String(inspection.branch_id),
+    date: String(inspection.work_date),
+    inspectionId: String(inspection.id),
+  });
+  if (inspection.submitted_by) query.set('employeeId', String(inspection.submitted_by));
+  if (inspection.line_user_id) query.set('lineUserId', String(inspection.line_user_id));
+  if (inspection.branches && inspection.branches.code) query.set('branchCode', String(inspection.branches.code));
+  return `${path}?${query.toString()}`;
+}
 
 function bangkokDateParts(date = new Date()) {
   const value = date instanceof Date ? date : new Date(date);
@@ -406,6 +429,110 @@ async function notifyCashDepositResults() {
   }
 }
 
+async function notifyPendingLiffInspections() {
+  const { data, error } = await supabase
+    .from('store_inspections')
+    .select(`
+      id,
+      branch_id,
+      submitted_by,
+      work_date,
+      submit_time,
+      status,
+      inspection_items,
+      photo_count,
+      line_group_id,
+      line_user_id,
+      branches(code,name),
+      employees(name,nickname,line_user_id)
+    `)
+    .eq('status', 'pending')
+    .order('updated_at', { ascending: true })
+    .limit(20);
+
+  if (error) {
+    console.warn('Pending LIFF inspection notification query failed:', error.message || error);
+    return;
+  }
+
+  for (const inspection of data || []) {
+    const items = inspection.inspection_items && typeof inspection.inspection_items === 'object'
+      ? inspection.inspection_items
+      : {};
+    if (!items.inspected_shop || items.inspection_source !== 'liff' || items.approval_flex_sent_at) continue;
+
+    const { data: attachments, error: attachmentError } = await supabase
+      .from('attachments')
+      .select('*')
+      .eq('entity_type', 'store_inspection')
+      .eq('entity_id', inspection.id)
+      .order('created_at', { ascending: true });
+
+    if (attachmentError) {
+      console.warn('Pending inspection attachments query failed:', attachmentError.message || attachmentError, { inspection_id: inspection.id });
+    }
+
+    const branchCode = inspection.branches ? (inspection.branches.code || inspection.branches.name) : inspection.branch_id;
+    const submitterName = getDisplayName(inspection.employees);
+    const pendingFlex = inspectionPendingFlex({
+      inspectionId: inspection.id,
+      branchCode,
+      submitterName,
+      photoCount: inspection.photo_count || (attachments || []).length,
+      attachments: attachments || [],
+      workDate: inspection.work_date,
+      submitTime: inspection.submit_time,
+      detailUri: buildInspectionDetailUrl(inspection),
+      showActions: false,
+    });
+
+    const targets = new Map();
+    if (inspection.line_group_id) targets.set(inspection.line_group_id, 'group');
+
+    let managers = [];
+    try {
+      managers = await userRepo.findBranchManagers({
+        id: inspection.branch_id,
+        code: inspection.branches && inspection.branches.code,
+        name: inspection.branches && inspection.branches.name,
+      });
+    } catch (managerError) {
+      console.warn('Pending inspection manager lookup failed:', managerError.message || managerError, { inspection_id: inspection.id });
+    }
+
+    for (const manager of managers) {
+      if (manager.line_user_id) targets.set(manager.line_user_id, 'manager');
+    }
+
+    let sentCount = 0;
+    for (const [target, targetType] of targets.entries()) {
+      try {
+        await push(target, pendingFlex);
+        sentCount += 1;
+      } catch (sendError) {
+        console.warn('Pending inspection LINE push failed:', getLineErrorDetail(sendError), {
+          inspection_id: inspection.id,
+          targetType,
+        });
+      }
+    }
+
+    if (sentCount > 0) {
+      await supabase
+        .from('store_inspections')
+        .update({
+          inspection_items: {
+            ...items,
+            approval_flex_sent_at: new Date().toISOString(),
+            approval_flex_target_count: sentCount,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', inspection.id);
+    }
+  }
+}
+
 async function notifyInspectionResults() {
   const { data, error } = await supabase
     .from('store_inspections')
@@ -476,6 +603,7 @@ async function runLineJobs(date = new Date()) {
     await sendLeaveResults();
     await notifySalesResults();
     await notifyCashDepositResults();
+    await notifyPendingLiffInspections();
     await notifyInspectionResults();
     await sendTodayWarningLetters(date);
     await sendTodayAttendanceAlerts(date);
@@ -495,5 +623,6 @@ module.exports = {
   sendMonthEndPayroll,
   notifySalesResults,
   notifyCashDepositResults,
+  notifyPendingLiffInspections,
   notifyInspectionResults,
 };
