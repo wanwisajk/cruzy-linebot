@@ -16,7 +16,11 @@ const TH_GREGORY_LOCALE = 'th-TH-u-ca-gregory-nu-latn';
 const DEFAULT_INSPECTION_LIFF_URL = 'https://liff.line.me/2010334830-E2aZbMzY';
 
 function inspectionLiffBaseUrl() {
-  return String(process.env.LIFF_INSPECTION_URL || DEFAULT_INSPECTION_LIFF_URL).replace(/\/+$/, '');
+  const raw = String(process.env.LIFF_INSPECTION_URL || DEFAULT_INSPECTION_LIFF_URL).trim().replace(/\/+$/, '');
+  if (/^\d+-[A-Za-z0-9_-]+$/.test(raw)) return `https://liff.line.me/${raw}`;
+  if (/^liff\.line\.me\//i.test(raw)) return `https://${raw}`;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return DEFAULT_INSPECTION_LIFF_URL;
 }
 
 function buildInspectionDetailUrl(inspection) {
@@ -201,22 +205,38 @@ async function sendTodayAttendanceAlerts(date = new Date()) {
     const lineUserId = alert.employees && alert.employees.line_user_id;
     if (!lineUserId) continue;
 
-    await push(lineUserId, alertFlex({
-      title: alert.title || 'แจ้งเตือนการเข้างานวันนี้',
-      body: [
-        `พนักงาน: ${getDisplayName(alert.employees)}`,
-        `วันที่: ${alert.work_date}`,
-        `สาขา: ${alert.branches ? alert.branches.code : '-'}`,
-        alert.alert_time ? `เวลา: ${String(alert.alert_time).slice(0, 5)}` : null,
-        alert.detail,
-      ].filter(Boolean).join('\n'),
-      severity: alert.severity,
-    }));
-
-    await supabase
+    const { data: claimed, error: claimError } = await supabase
       .from('attendance_alerts')
       .update({ is_acknowledged: true })
-      .eq('id', alert.id);
+      .eq('id', alert.id)
+      .eq('is_acknowledged', false)
+      .select('id')
+      .maybeSingle();
+
+    if (claimError || !claimed) {
+      if (claimError) console.warn('Attendance alert claim failed:', claimError.message || claimError, { alert_id: alert.id });
+      continue;
+    }
+
+    try {
+      await push(lineUserId, alertFlex({
+        title: alert.title || 'แจ้งเตือนการเข้างานวันนี้',
+        body: [
+          `พนักงาน: ${getDisplayName(alert.employees)}`,
+          `วันที่: ${alert.work_date}`,
+          `สาขา: ${alert.branches ? alert.branches.code : '-'}`,
+          alert.alert_time ? `เวลา: ${String(alert.alert_time).slice(0, 5)}` : null,
+          alert.detail,
+        ].filter(Boolean).join('\n'),
+        severity: alert.severity,
+      }));
+    } catch (sendError) {
+      await supabase
+        .from('attendance_alerts')
+        .update({ is_acknowledged: false })
+        .eq('id', alert.id);
+      console.warn('Attendance alert LINE push failed:', getLineErrorDetail(sendError), { alert_id: alert.id, lineUserId });
+    }
   }
 }
 

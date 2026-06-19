@@ -60,13 +60,18 @@ function inspectionLiffEntryFlex({ branchCode, submitterName, workDate, uri }) {
   });
 }
 
+function isLineUriActionSafe(uri) {
+  const value = String(uri || '').trim();
+  return /^https?:\/\//i.test(value) && value.length <= 1000;
+}
+
 function normalizeAttachmentItems({ attachments, attachmentUrls }) {
   if (Array.isArray(attachments) && attachments.length > 0) {
     let inspectionIndex = 0;
     return attachments
       .map((attachment, index) => {
         const uri = attachment && (attachment.file_url || attachment.url || attachment.uri);
-        if (!uri) return null;
+        if (!isLineUriActionSafe(uri)) return null;
 
         const fileName = String((attachment && attachment.file_name) || '');
         const storagePath = String((attachment && attachment.storage_path) || '');
@@ -82,16 +87,18 @@ function normalizeAttachmentItems({ attachments, attachmentUrls }) {
             ? 'รูปปิดร้าน'
             : `รูปตรวจ ${++inspectionIndex}`;
 
-        return { uri, label, index };
+        return { uri: String(uri).trim(), label, index };
       })
       .filter(Boolean);
   }
 
-  return (attachmentUrls || []).map((uri, index) => ({
-    uri,
-    label: index === 0 ? 'รูปเปิดร้าน' : `รูปตรวจ ${index}`,
-    index,
-  }));
+  return (attachmentUrls || [])
+    .filter(isLineUriActionSafe)
+    .map((uri, index) => ({
+      uri: String(uri).trim(),
+      label: index === 0 ? 'รูปเปิดร้าน' : `รูปตรวจ ${index}`,
+      index,
+    }));
 }
 
 function inspectionPendingFlex({
@@ -106,6 +113,7 @@ function inspectionPendingFlex({
   detailUri,
   showActions = true,
 }) {
+  const safeDetailUri = isLineUriActionSafe(detailUri) ? String(detailUri).trim() : null;
   const attachmentItems = normalizeAttachmentItems({ attachments, attachmentUrls });
   const imageButtons = attachmentItems.slice(0, 3).map((item) => ({
     type: 'button',
@@ -167,7 +175,7 @@ function inspectionPendingFlex({
         spacing: 'md',
         backgroundColor: COLORS.white,
         contents: [
-          detailUri ? primaryButton('ดูรายละเอียด', { type: 'uri', uri: detailUri }, COLORS.info) : null,
+          safeDetailUri ? primaryButton('ดูรายละเอียด', { type: 'uri', uri: safeDetailUri }, COLORS.info) : null,
           {
             type: 'box',
             layout: 'vertical',
