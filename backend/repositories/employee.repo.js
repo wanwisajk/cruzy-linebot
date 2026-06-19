@@ -47,8 +47,9 @@ async function findByUserIdentity(user) {
 
   const scopeType = String(user.scope_type || '').toLowerCase();
   const employeeScopeTypes = new Set(['employee', 'empolyee', 'staff', 'worker']);
-  if (employeeScopeTypes.has(scopeType) && /^\d+$/.test(String(user.scope_value || ''))) {
-    return findById(user.scope_value);
+  const scopeValue = String(user.scope_value || '').trim();
+  if (employeeScopeTypes.has(scopeType) && scopeValue) {
+    return findById(scopeValue);
   }
 
   return null;

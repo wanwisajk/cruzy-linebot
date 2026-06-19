@@ -96,12 +96,12 @@ async function handleEvent(event) {
       return linkHandler.handleBranchLink(event);
     }
 
-    if (/^แอดมิน\s+\d+$/i.test(text.trim())) {
+    if (/^แอดมิน\s+\S{1,255}$/i.test(text.trim())) {
       console.log('🔗 Routing to admin LINE user link');
       return linkHandler.handleAdminLink(event);
     }
 
-    if (/^(?:พนักงาน|register)\s+\d+/i.test(text)) {
+    if (/^(?:พนักงาน|register)\s+\S{1,255}$/i.test(text.trim())) {
       console.log('🔗 Routing to register handler');
       return registerHandler.handle(event);
     }

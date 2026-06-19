@@ -35,7 +35,7 @@ async function handleBranchLink(event) {
 
 async function handleAdminLink(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
-  const match = text.match(/^แอดมิน\s+(\d+)$/i);
+  const match = text.trim().match(/^แอดมิน\s+(\S{1,255})$/i);
   const lineUserId = event.source && event.source.userId;
 
   if (!lineUserId) {
@@ -44,17 +44,18 @@ async function handleAdminLink(event) {
   }
 
   if (!match) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: แอดมิน <user id>' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: แอดมิน <user id> เช่น แอดมิน admin001' }] });
     return;
   }
 
-  const user = await userRepo.findById(match[1]);
+  const adminId = match[1].trim();
+  const user = await userRepo.findById(adminId);
   if (!user) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ไม่พบ user id ${match[1]}` }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ไม่พบ user id ${adminId}` }] });
     return;
   }
 
-  const linked = await userRepo.updateLineUserId(match[1], lineUserId);
+  const linked = await userRepo.updateLineUserId(adminId, lineUserId);
   await logEvent('admin_line_user_linked', { user_id: linked.id, username: linked.username, line_user_id: lineUserId });
   await replyOrPush({
     replyToken: event.replyToken,

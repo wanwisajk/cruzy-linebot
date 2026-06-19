@@ -7,13 +7,13 @@ async function handle(event) {
   const source = event.source || {};
   const lineUserId = source.userId || null;
 
-  const match = text.match(/^(?:พนักงาน|register)\s+(\d+)$/i);
+  const match = text.trim().match(/^(?:พนักงาน|register)\s+(\S{1,255})$/i);
   if (!match) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูป: พนักงาน <หมายเลข>' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: พนักงาน <รหัสพนักงาน> เช่น พนักงาน EMP001' }] });
     return;
   }
 
-  const employeeId = match[1];
+  const employeeId = match[1].trim();
 
   if (!lineUserId) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบ LINE userId ครับ' }] });
@@ -23,19 +23,19 @@ async function handle(event) {
   // Check employee exists
   const employee = await employeeRepo.findById(employeeId);
   if (!employee) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ไม่พบพนักงานหมายเลข ${employeeId}` }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `ไม่พบพนักงานรหัส ${employeeId}` }] });
     return;
   }
 
   // Check if already linked to different account
   if (employee.line_user_id && employee.line_user_id !== lineUserId) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `พนักงานหมายเลข ${employeeId} ผูกกับ LINE account อื่นแล้ว` }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: `พนักงานรหัส ${employeeId} ผูกกับ LINE account อื่นแล้ว` }] });
     return;
   }
 
   // Check if this LINE account is linked to different employee
   const existingEmployee = await employeeRepo.findByLineUserId(lineUserId);
-  if (existingEmployee && existingEmployee.id !== employeeId) {
+  if (existingEmployee && String(existingEmployee.id) !== String(employeeId)) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'LINE ของคุณเชื่อมกับพนักงานคนอื่นแล้ว' }] });
     return;
   }
@@ -46,7 +46,7 @@ async function handle(event) {
     await logEvent('employee_registered', { employee_id: employeeId, line_user_id: lineUserId });
     await replyOrPush({
       replyToken: event.replyToken,
-      messages: [{ type: 'text', text: `ผูก LINE สำเร็จ\nชื่อ: ${employee.name}\nหมายเลข: ${employeeId}` }],
+      messages: [{ type: 'text', text: `ผูก LINE สำเร็จ\nชื่อ: ${employee.name}\nรหัส: ${employeeId}` }],
     });
   } catch (err) {
     await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'เกิดข้อผิดพลาด กรุณาลองใหม่' }] });
