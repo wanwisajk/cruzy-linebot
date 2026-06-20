@@ -28,6 +28,23 @@ async function searchByName(keyword) {
   return data || [];
 }
 
+async function searchByKeyword(keyword, limit = 8) {
+  const value = String(keyword || '').trim().replace(/[,%]/g, ' ');
+  if (!value) return [];
+
+  const { data, error } = await supabase
+    .from('employees')
+    .select('id,name,nickname,position,phone,emp_type,line_user_id,regions(name)')
+    .or(`id.ilike.%${value}%,name.ilike.%${value}%,nickname.ilike.%${value}%`)
+    .limit(limit);
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
 async function findById(id) {
   const { data, error } = await supabase
     .from('employees')
@@ -73,6 +90,7 @@ async function updateLineUserId(id, lineUserId) {
 module.exports = {
   findByLineUserId,
   searchByName,
+  searchByKeyword,
   findById,
   findByUserIdentity,
   updateLineUserId,

@@ -3,7 +3,7 @@ const { supabase } = require('../config/supabase');
 async function findAllWithRegions() {
   const { data, error } = await supabase
     .from('branches')
-    .select('id,name,code,line_group_id,regions(name)')
+    .select('id,name,code,region_id,line_group_id,regions(name)')
     .order('code', { ascending: true });
 
   if (error) {
@@ -16,7 +16,7 @@ async function findAllWithRegions() {
 async function findByCode(code) {
   const { data, error } = await supabase
     .from('branches')
-    .select('id,name,code,line_group_id,regions(name)')
+    .select('id,name,code,region_id,line_group_id,regions(name)')
     .ilike('code', code)
     .maybeSingle();
 
@@ -30,7 +30,7 @@ async function findByCode(code) {
 async function findByLineGroupId(lineGroupId) {
   const { data, error } = await supabase
     .from('branches')
-    .select('id,name,code,line_group_id,regions(name)')
+    .select('id,name,code,region_id,line_group_id,regions(name)')
     .eq('line_group_id', lineGroupId)
     .maybeSingle();
 
@@ -71,10 +71,29 @@ async function updateLineGroupIdByCode(code, lineGroupId) {
   return data;
 }
 
+async function searchByKeyword(keyword, limit = 8) {
+  const value = String(keyword || '').trim().replace(/[,%]/g, ' ');
+  if (!value) return [];
+
+  const { data, error } = await supabase
+    .from('branches')
+    .select('id,name,code,region_id,line_group_id,regions(name)')
+    .or(`code.ilike.%${value}%,name.ilike.%${value}%`)
+    .order('code', { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
 module.exports = {
   findAllWithRegions,
   findByCode,
   findByLineGroupId,
+  searchByKeyword,
   updateLineGroupId,
   updateLineGroupIdByCode,
 };

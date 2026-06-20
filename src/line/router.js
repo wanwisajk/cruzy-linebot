@@ -14,6 +14,7 @@ const { logInboundLineEvent } = require('./utils/audit');
 const { hasInspectionState } = require('./flows/inspect/state');
 const { hasLeaveState } = require('./flows/leave/state');
 const leaveHandler = require('./flows/leave/handler');
+const scheduleHandler = require('./flows/schedule/handler');
 
 function isOpenShopCommand(text) {
   return /เปิด\s*ร้าน/i.test(text);
@@ -104,6 +105,11 @@ async function handleEvent(event) {
     if (/^(?:พนักงาน|register)\s+\S{1,255}$/i.test(text.trim())) {
       console.log('🔗 Routing to register handler');
       return registerHandler.handle(event);
+    }
+
+    if (/^ตาราง/i.test(text.trim()) || /^schedule\b/i.test(text.trim())) {
+      console.log('📅 Routing to schedule handler');
+      return scheduleHandler.handle(event);
     }
 
     if (lower.includes('เงินเดือน')) {
