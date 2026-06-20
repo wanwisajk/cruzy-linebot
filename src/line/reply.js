@@ -1,5 +1,9 @@
 const { lineClient } = require('../../backend/config/line');
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function getLineErrorDetail(error) {
   const detail = {
     message: error && error.message,
@@ -13,27 +17,69 @@ function getLineErrorDetail(error) {
 
   if (responseData) detail.response = responseData;
   if (error && error.details) detail.details = error.details;
+  if (error && error.cause) {
+    detail.cause = {
+      message: error.cause.message,
+      code: error.cause.code,
+      errno: error.cause.errno,
+      syscall: error.cause.syscall,
+      hostname: error.cause.hostname,
+      address: error.cause.address,
+      port: error.cause.port,
+    };
+  }
 
   return detail;
 }
 
-async function replyOrPush({ replyToken, to, messages }) {
-  try {
-    if (replyToken) {
-      return await lineClient.replyMessage({ replyToken, messages });
-    }
+function isTransientLineSendError(error) {
+  if (!error) return false;
+  if (error.message === 'fetch failed') return true;
 
-    if (to) {
-      return await lineClient.pushMessage({ to, messages });
-    }
-  } catch (error) {
-    console.error('LINE send failed:', getLineErrorDetail(error));
-    throw error;
+  const code = error.cause && error.cause.code || error.code;
+  return ['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'].includes(code);
+}
+
+async function sendLineMessage({ replyToken, to, messages }) {
+  if (replyToken) {
+    return lineClient.replyMessage({ replyToken, messages });
+  }
+
+  if (to) {
+    return lineClient.pushMessage({ to, messages });
   }
 
   throw new Error('No replyToken or target provided for replyOrPush');
 }
 
+async function replyOrPush({ replyToken, to, messages }) {
+  const maxAttempts = 2;
+  try {
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await sendLineMessage({ replyToken, to, messages });
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxAttempts || !isTransientLineSendError(error)) {
+          throw error;
+        }
+
+        console.warn('LINE send transient failure, retrying:', {
+          attempt,
+          detail: getLineErrorDetail(error),
+        });
+        await sleep(350);
+      }
+    }
+    throw lastError;
+  } catch (error) {
+    console.error('LINE send failed:', getLineErrorDetail(error));
+    throw error;
+  }
+}
+
 module.exports = {
+  getLineErrorDetail,
   replyOrPush,
 };

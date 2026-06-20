@@ -23,7 +23,10 @@ const {
   updateLeaveState,
 } = require('./state');
 
-const LEAVE_TYPES = ['ลาป่วย', 'ลากิจ', 'ลาพักร้อน', 'ลาประจำปี'];
+const LEAVE_TYPES = ['ลาป่วย', 'ลางาน', 'ลากิจ', 'ลาประจำปี'];
+const LEGACY_LEAVE_TYPE_ALIASES = {
+  'ลาพักร้อน': 'ลางาน',
+};
 
 function getStateKey(event) {
   return event.source && event.source.userId;
@@ -32,6 +35,15 @@ function getStateKey(event) {
 function isPrivateEvent(event) {
   const source = event.source || {};
   return !!source.userId && !source.groupId && !source.roomId;
+}
+
+function isLeaveStartCommand(text) {
+  return /^(?:แจ้งลางาน|ขอลา)$/i.test(String(text || '').trim());
+}
+
+function normalizeLeaveType(type) {
+  const value = String(type || '').trim();
+  return LEGACY_LEAVE_TYPE_ALIASES[value] || value;
 }
 
 function eventIso(event) {
@@ -159,8 +171,8 @@ async function handle(event) {
   if (lower === 'เสร็จ' || lower === 'ข้าม') return finishAttachments(event, lower === 'ข้าม');
   if (lower === 'ยืนยันส่ง') return submitLeave(event);
   if (state && state.status === LEAVE_STATUS.AWAITING_DETAILS) return receiveDetails(event);
-  if (LEAVE_TYPES.includes(text)) return selectLeaveType(event, text);
-  if (/^ขอลา$/i.test(text)) return startLeave(event);
+  if (LEAVE_TYPES.includes(text) || LEGACY_LEAVE_TYPE_ALIASES[text]) return selectLeaveType(event, normalizeLeaveType(text));
+  if (isLeaveStartCommand(text)) return startLeave(event);
 
   return null;
 }
@@ -238,9 +250,9 @@ async function trackLeaveStatus(event) {
   if (!leave) {
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
       title: 'ไม่พบคำขอลาที่รออนุมัติ',
-      message: 'ตอนนี้ไม่มีคำขอลาที่ยังรออนุมัติอยู่ หากต้องการขอลาใหม่ให้พิมพ์ "ขอลา"',
-      buttonLabel: 'ขอลา',
-      buttonText: 'ขอลา',
+      message: 'ตอนนี้ไม่มีคำขอลาที่ยังรออนุมัติอยู่ หากต้องการแจ้งลางานใหม่ให้พิมพ์ "แจ้งลางาน"',
+      buttonLabel: 'แจ้งลางาน',
+      buttonText: 'แจ้งลางาน',
       color: '#64748B',
       altText: 'ไม่พบคำขอลาที่รออนุมัติ',
     })] });
@@ -275,9 +287,9 @@ async function startLeave(event) {
   if (!stateKey) {
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
       title: 'ไม่พบ LINE user id',
-      message: 'ระบบไม่พบรหัส LINE ของคุณสำหรับการขอลา กรุณาลองใหม่ในแชทนี้หรือรีสตาร์ทบอท',
+      message: 'ระบบไม่พบรหัส LINE ของคุณสำหรับการแจ้งลางาน กรุณาลองใหม่ในแชทนี้หรือรีสตาร์ทบอท',
       buttonLabel: 'เริ่มใหม่',
-      buttonText: 'ขอลา',
+      buttonText: 'แจ้งลางาน',
       color: '#B91C1C',
       altText: 'ไม่พบ LINE user id',
     })] });
@@ -288,7 +300,7 @@ async function startLeave(event) {
   if (!actor || !actor.type) {
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
       title: 'กรุณาผูก LINE',
-      message: 'หากต้องการขอลา กรุณาผูก LINE กับพนักงานด้วยคำสั่ง: พนักงาน <รหัสพนักงาน> หรือใช้บัญชีผู้ใช้งานระบบที่ลงทะเบียนแล้ว',
+      message: 'หากต้องการแจ้งลางาน กรุณาผูก LINE กับพนักงานด้วยคำสั่ง: พนักงาน <รหัสพนักงาน> หรือใช้บัญชีผู้ใช้งานระบบที่ลงทะเบียนแล้ว',
       buttonLabel: 'วิธีผูก',
       buttonText: 'พนักงาน <รหัสพนักงาน>',
       color: '#EA580C',
@@ -542,7 +554,7 @@ async function cancelLeave(event) {
     title: 'ยกเลิกคำขอ',
     message: 'ยกเลิกคำขอลาแล้ว',
     buttonLabel: 'เริ่มใหม่',
-    buttonText: 'ขอลา',
+    buttonText: 'แจ้งลางาน',
     color: '#6B7280',
     altText: 'ยกเลิกคำขอ',
   })] });

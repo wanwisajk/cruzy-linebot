@@ -30,7 +30,11 @@ function isCloseShopCommand(text) {
 }
 
 function isLeaveTypeText(text) {
-  return ['ลาป่วย', 'ลากิจ', 'ลาพักร้อน', 'ลาประจำปี'].includes(String(text || '').trim());
+  return ['ลาป่วย', 'ลางาน', 'ลากิจ', 'ลาประจำปี', 'ลาพักร้อน'].includes(String(text || '').trim());
+}
+
+function isLeaveStartCommand(text) {
+  return /^(?:แจ้งลางาน|ขอลา)$/i.test(String(text || '').trim());
 }
 
 function getScopedStateKeys(source = {}) {
@@ -219,7 +223,7 @@ if (
       return depositHandler.handle(event);
     }
 
-    if (lower === 'ขอลา') {
+    if (isLeaveStartCommand(text)) {
       if (!isPrivateEvent(event)) return null;
       console.log('🏖️ Routing to leave handler');
       return leaveHandler.handle(event);

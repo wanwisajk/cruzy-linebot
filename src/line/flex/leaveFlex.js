@@ -39,7 +39,7 @@ function leaveInfoRow(label, value, color = THEME_COLORS.INK) {
 
 // 1. หน้าเลือกประเภทการลา (น้ำเงินพรีเมียม)
 function leaveTypeFlex() {
-  const types = ['ลาป่วย', 'ลากิจ', 'ลาพักร้อน', 'ลาประจำปี'];
+  const types = ['ลาป่วย', 'ลางาน', 'ลากิจ', 'ลาประจำปี'];
   return bubble({
     title: '📋 เลือกประเภทการลา',
     subtitle: 'กรุณาเลือกประเภทการลาที่ต้องการ',
