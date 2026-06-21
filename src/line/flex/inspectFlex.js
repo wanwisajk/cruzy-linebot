@@ -12,7 +12,6 @@ function inspectionSummaryFlex({ branchCode, submitterName, photoCount, workDate
         infoRow('ผู้ตรวจ', submitterName || 'ไม่ระบุ'),
         infoRow('วันที่', workDate || '-'),
         infoRow('เวลา', submitTime ? String(submitTime).slice(0, 5) : '-'),
-        infoRow('รูปตรวจร้าน', `${photoCount || 0} รูป`, '#1D4ED8'),
       ], { backgroundColor: '#FFFFFF' }),
     ],
     footer: {
