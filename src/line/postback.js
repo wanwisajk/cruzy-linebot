@@ -12,6 +12,11 @@ const { inspectionPendingFlex } = require('./flex/inspectFlex');
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
 const { recordDeposit, saveDepositSlipAttachments } = require('./flows/deposit/service');
 const { getDisplayName } = require('./utils/displayName');
+const {
+  getBranchCashPending,
+  syncDepositLedger,
+  deleteDepositLedger,
+} = require('../../backend/services/branchCashLedger.service');
 
 const BANGKOK_TIME_ZONE = 'Asia/Bangkok';
 const TH_GREGORY_LOCALE = 'th-TH-u-ca-gregory-nu-latn';
@@ -145,8 +150,8 @@ async function resolveApprovalActor(event) {
     lineUserId,
     displayName,
     confirmedByUsername: actor && actor.user ? actor.user.username : confirmedByUsername,
-    actorType: actor && actor.user && actor.employeeResolvedBy === 'user_identity' ? 'user' : actor && actor.type,
-    actorId: actor && actor.user && actor.employeeResolvedBy === 'user_identity' ? actor.user.id : actor && actor.id,
+    actorType: 'line',
+    actorId: lineUserId,
     name: displayName,
   };
 }
@@ -205,11 +210,10 @@ async function resolveReviewActor(event) {
     const actor = await resolveLineActor(lineUserId);
     if (actor && actor.type) {
       const actorType = actor.user && actor.employeeResolvedBy === 'user_identity' ? 'user' : actor.type;
-      const actorId = actorType === 'user' && actor.user ? actor.user.id : actor.id;
       const username = actor.user ? actor.user.username : await fetchMatchingUsername(actor.employee);
       return {
-        actorType,
-        actorId,
+        actorType: 'line',
+        actorId: lineUserId,
         name: getDisplayName(actor.employee, actor.user, actor.name, lineUserId),
         username,
       };
@@ -417,7 +421,7 @@ async function handlePostback(event) {
 
     if (action === 'edit') {
       setDepositState(actor, null);
-      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'แก้ไขข้อมูลได้เลยครับ พิมพ์ยอดฝากใหม่อีกครั้ง' }] });
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'เริ่มฝากเงินใหม่ได้เลยครับ พิมพ์ #ฝากเงิน พร้อมยอดฝากใหม่ แล้วส่งรูปสลิปอีกครั้ง' }] });
       return true;
     }
 
@@ -430,7 +434,9 @@ async function handlePostback(event) {
       deposit_date: pendingState.depositDate,
       branch_id: pendingState.branchId,
       deposited_by: pendingState.employeeId,
+      expected_amount: pendingState.expectedAmount,
       deposited_amount: pendingState.amount,
+      variance_amount: pendingState.varianceAmount,
       bank: pendingState.bank || null,
       bank_short: pendingState.bankShort || null,
       bank_account_id: pendingState.bankAccountId || null,
@@ -440,6 +446,10 @@ async function handlePostback(event) {
       line_user_id: pendingState.lineUserId,
       message_text: pendingState.messageText,
       submitted_at: pendingState.submittedAt,
+      covered_date: pendingState.coveredDate,
+      auditActorType: pendingState.auditActorType || pendingState.actorType,
+      auditActorId: pendingState.auditActorId || pendingState.actorId,
+      auditActorName: pendingState.auditActorName || pendingState.actorName,
     });
 
     await logEvent('deposit_recorded', {
@@ -449,6 +459,7 @@ async function handlePostback(event) {
     });
 
     const savedSlips = await savePendingDepositSlips(created, pendingState);
+    const pendingCashBalance = await getBranchCashPending(created.branch_id);
 
     setDepositState(actor, null);
 
@@ -475,6 +486,10 @@ async function handlePostback(event) {
           messageText: pendingState.messageText,
           source: pendingState.source || 'line',
           depositedBy: pendingState.employeeName,
+          pendingCashBalance,
+          coveredDate: pendingState.coveredDate,
+          expectedAmount: pendingState.expectedAmount,
+          varianceAmount: pendingState.varianceAmount,
         });
         await replyOrPush({ to: created.line_group_id, messages: [managerFlex] });
       } catch (err) {
@@ -496,7 +511,7 @@ async function handlePostback(event) {
     if (pendingState && pendingState.status === DEPOSIT_STATUS.AWAITING_CONFIRMATION && (action === 'send' || action === 'edit')) {
       if (action === 'edit') {
         setDepositState(actor, null);
-        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'แก้ไขข้อมูลได้เลยครับ พิมพ์ยอดฝากใหม่อีกครั้ง' }] });
+        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'เริ่มฝากเงินใหม่ได้เลยครับ พิมพ์ #ฝากเงิน พร้อมยอดฝากใหม่ แล้วส่งรูปสลิปอีกครั้ง' }] });
         return true;
       }
 
@@ -504,7 +519,9 @@ async function handlePostback(event) {
         deposit_date: pendingState.depositDate,
         branch_id: pendingState.branchId,
         deposited_by: pendingState.employeeId,
+        expected_amount: pendingState.expectedAmount,
         deposited_amount: pendingState.amount,
+        variance_amount: pendingState.varianceAmount,
         bank: pendingState.bank || null,
         bank_short: pendingState.bankShort || null,
         bank_account_id: pendingState.bankAccountId || null,
@@ -514,6 +531,10 @@ async function handlePostback(event) {
         line_user_id: pendingState.lineUserId,
         message_text: pendingState.messageText,
         submitted_at: pendingState.submittedAt,
+        covered_date: pendingState.coveredDate,
+        auditActorType: pendingState.auditActorType || pendingState.actorType,
+        auditActorId: pendingState.auditActorId || pendingState.actorId,
+        auditActorName: pendingState.auditActorName || pendingState.actorName,
       });
 
       await logEvent('deposit_recorded', {
@@ -522,6 +543,7 @@ async function handlePostback(event) {
         actorId: pendingState.actorId || pendingState.employeeId || null,
       });
       const savedSlips = await savePendingDepositSlips(created, pendingState);
+      const pendingCashBalance = await getBranchCashPending(created.branch_id);
       setDepositState(actor, null);
 
       if (created && created.line_group_id) {
@@ -542,6 +564,10 @@ async function handlePostback(event) {
             messageText: pendingState.messageText,
             source: pendingState.source || 'line',
             depositedBy: pendingState.employeeName,
+            pendingCashBalance,
+            coveredDate: pendingState.coveredDate,
+            expectedAmount: pendingState.expectedAmount,
+            varianceAmount: pendingState.varianceAmount,
           });
           await replyOrPush({ to: created.line_group_id, messages: [managerFlex] });
         } catch (err) {
@@ -585,6 +611,9 @@ async function handlePostback(event) {
         verified_by: actorInfo.confirmedByUsername || null,
         updated_at: new Date().toISOString(),
         line_notified: false,
+        audit_actor_type: actorInfo.actorType || 'line',
+        audit_actor_id: actorInfo.actorId ? String(actorInfo.actorId) : actor || null,
+        audit_actor_name: actorName || null,
       };
 
       const { data: updated, error: updateError } = await supabase.from('cash_deposits').update(payload).eq('id', depositId).select('*').maybeSingle();
@@ -594,6 +623,7 @@ async function handlePostback(event) {
         return true;
       }
 
+      await syncDepositLedger(updated);
       await logEvent('deposit_verified_by_manager', { deposit_id: depositId, actor, verified_by: actorName, confirmed_by: actorInfo.confirmedByUsername || null });
       await replyOrPush({
         ...replyTarget,
@@ -609,6 +639,9 @@ async function handlePostback(event) {
         verified_by: actorInfo.confirmedByUsername || null,
         updated_at: new Date().toISOString(),
         line_notified: false,
+        audit_actor_type: actorInfo.actorType || 'line',
+        audit_actor_id: actorInfo.actorId ? String(actorInfo.actorId) : actor || null,
+        audit_actor_name: actorName || null,
       };
       const { data: updated, error: updateError } = await supabase.from('cash_deposits').update(payload).eq('id', depositId).select('*').maybeSingle();
       if (updateError) {
@@ -617,6 +650,7 @@ async function handlePostback(event) {
         return true;
       }
 
+      await deleteDepositLedger(updated.id);
       await logEvent('deposit_rejected_by_manager', { deposit_id: depositId, actor, rejected_by: actorName, confirmed_by: actorInfo.confirmedByUsername || null });
       await replyOrPush({
         ...replyTarget,
@@ -674,6 +708,9 @@ async function handlePostback(event) {
       await updateSaleStatusWithTimestamp(saleId, 'confirmed', {
         confirmedByUsername: actorInfo.confirmedByUsername,
         lineNotified: false,
+        auditActorType: actorInfo.actorType || 'line',
+        auditActorId: actorInfo.actorId || actor,
+        auditActorName: actorName,
       });
       await logEvent('sales_approved_by_manager', {
         sale_id: saleId,
@@ -688,6 +725,9 @@ async function handlePostback(event) {
       await updateSaleStatusWithTimestamp(saleId, 'rejected', {
         confirmedByUsername: actorInfo.confirmedByUsername,
         lineNotified: false,
+        auditActorType: actorInfo.actorType || 'line',
+        auditActorId: actorInfo.actorId || actor,
+        auditActorName: actorName,
       });
       await logEvent('sales_rejected_by_manager', {
         sale_id: saleId,

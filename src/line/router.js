@@ -2,7 +2,7 @@ const openHandler = require('./flows/open/handler');
 const closeHandler = require('./flows/close/handler');
 const inspectHandler = require('./flows/inspect/handler');
 const registerHandler = require('./flows/register/handler');
-const { handleTextMessage, handleImageMessage, handleUploadPrompt, handleEditFlow } = require('./flows/sales/handler');
+const { handleTextMessage, handleImageMessage, handleUploadPrompt } = require('./flows/sales/handler');
 const { getFlowState, FLOW_STATES } = require('./flows/sales/state');
 const depositHandler = require('./flows/deposit/handler');
 const { getDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
@@ -37,6 +37,10 @@ function isLeaveStartCommand(text) {
   return /^(?:แจ้งลางาน|ขอลา)$/i.test(String(text || '').trim());
 }
 
+function isDepositCommand(text) {
+  return /(^|\s)#ฝากเงิน(?:\s|$)/i.test(String(text || ''));
+}
+
 function getScopedStateKeys(source = {}) {
   return [source.groupId, source.roomId, source.userId].filter(Boolean);
 }
@@ -69,7 +73,13 @@ async function handleEvent(event) {
       }
       if (event.message.type === 'file') return null;
       const depositState = lineUserId ? getDepositState(lineUserId) : null;
-      if (depositState && depositState.status === DEPOSIT_STATUS.AWAITING_SLIP) {
+      if (
+        depositState &&
+        (
+          depositState.status === DEPOSIT_STATUS.AWAITING_SLIP ||
+          depositState.status === DEPOSIT_STATUS.AWAITING_CONFIRMATION
+        )
+      ) {
         return depositHandler.handleImageMessage(event);
       }
       if (closeHandler.hasActiveCloseImageRequest(event)) {
@@ -162,6 +172,7 @@ async function handleEvent(event) {
         lower === 'ข้าม' ||
         lower === 'ยืนยันส่ง' ||
         lower === 'ยกเลิก' ||
+        lower.includes('แก้ไข') ||
         lower.includes('วันที่เริ่มลา') ||
         isLeaveTypeText(text)
       )
@@ -170,7 +181,69 @@ async function handleEvent(event) {
       return leaveHandler.handle(event);
     }
 
+    const activeSalesState = event.source && event.source.userId ? getFlowState(event.source.userId) : null;
+    if (
+      activeSalesState &&
+      (
+        lower === 'ส่งรูปเสร็จ' ||
+        lower === 'เสร็จ' ||
+        lower === 'ยกเลิก' ||
+        lower === 'ยืนยันส่ง' ||
+        lower === 'บันทึกยอดขาย' ||
+        lower.includes('ส่งรูป') ||
+        lower.includes('อัพรูป') ||
+        lower.includes('อัปโหลดรูป') ||
+        lower.includes('แก้ไข')
+      )
+    ) {
+      console.log('💰 Routing to active sales flow');
+      const { handleConfirmation } = require('./flows/sales/handler');
+      return handleConfirmation && handleConfirmation(event);
+    }
+
+    const activeDepositState = event.source && event.source.userId ? getDepositState(event.source.userId) : null;
+    if (
+      activeDepositState &&
+      (
+        lower === 'ยกเลิก' ||
+        lower.includes('แก้ไข') ||
+        lower === 'ยืนยันส่ง' ||
+        lower === 'ส่งรูป' ||
+        lower === 'ส่งสลิป' ||
+        lower === 'ส่งรูปสลิป' ||
+        lower.includes('อัพรูป') ||
+        lower.includes('อัปโหลดรูป')
+      )
+    ) {
+      console.log('🏧 Routing to active deposit flow');
+      return depositHandler.handleActiveTextMessage(event);
+    }
+
+    if (
+      closeHandler.hasActiveCloseImageRequest(event) &&
+      (lower === 'ยกเลิก' || lower.includes('แก้ไข'))
+    ) {
+      console.log('🌙 Routing to active close flow');
+      return closeHandler.handleActiveTextMessage(event);
+    }
+
+    if (
+      openHandler.hasActiveOpenImageRequest(event) &&
+      (lower === 'ยกเลิก' || lower.includes('แก้ไข'))
+    ) {
+      console.log('🚪 Routing to active open flow');
+      return openHandler.handleActiveTextMessage(event);
+    }
+
     const hasActiveInspection = getScopedStateKeys(event.source || {}).some((key) => hasInspectionState(key));
+
+    if (
+      hasActiveInspection &&
+      (lower === 'ยกเลิก' || lower.includes('แก้ไข'))
+    ) {
+      console.log('🔍 Routing to active inspect flow control');
+      return inspectHandler.handle(event);
+    }
 
     if (lower === 'ตรวจเสร็จ' || (lower === 'ยืนยันส่ง' && hasActiveInspection)) {
       console.log('🔍 Routing to active inspect flow');
@@ -203,7 +276,7 @@ if (
       return inspectHandler.handle(event);
     }
 
-    if (lower.includes('ยอดขาย')) {
+    if (/^\s*#ยอดขาย(?:\s|$)/i.test(text)) {
       console.log('💰 Routing to sales handler');
       return handleTextMessage(event);
     }
@@ -213,12 +286,7 @@ if (
       return handleUploadPrompt && handleUploadPrompt(event);
     }
 
-    if (lower.includes('แก้ไข')) {
-      console.log('✏️ Routing to sales edit');
-      return handleEditFlow && handleEditFlow(event);
-    }
-
-    if (lower.includes('ฝาก') || lower.includes('ฝากเงิน')) {
+    if (isDepositCommand(text)) {
       console.log('🏧 Routing to deposit handler');
       return depositHandler.handle(event);
     }

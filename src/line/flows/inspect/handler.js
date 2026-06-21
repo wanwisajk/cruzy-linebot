@@ -66,6 +66,14 @@ async function handle(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
   const lower = String(text || '').trim().toLowerCase();
 
+  if (lower === 'ยกเลิก') {
+    return handleCancel(event);
+  }
+
+  if (lower.includes('แก้ไข')) {
+    return handleEdit(event);
+  }
+
   if (lower === 'ตรวจเสร็จ') {
     return handleDone(event);
   }
@@ -223,6 +231,9 @@ async function handleConfirm(event) {
     lineUserId: state.lineUserId,
     messageText: state.messageText,
     submittedAt: state.submittedAt,
+    auditActorType: state.auditActorType || 'line',
+    auditActorId: state.auditActorId || state.lineUserId,
+    auditActorName: state.auditActorName || state.submitterName,
   });
 
   const uploaded = [];
@@ -268,6 +279,32 @@ async function handleConfirm(event) {
     actor: state.employeeId,
     photo_count: photoCount,
     manager_count: managers.length,
+  });
+  return true;
+}
+
+async function handleCancel(event) {
+  const stateKey = getStateKey(event);
+  const state = stateKey ? getInspectionState(stateKey) : null;
+  if (!state) return null;
+
+  setInspectionState(stateKey, null);
+  await replyOrPush({
+    replyToken: event.replyToken,
+    messages: [{ type: 'text', text: 'ยกเลิกคำสั่งตรวจร้านแล้วครับ' }],
+  });
+  return true;
+}
+
+async function handleEdit(event) {
+  const stateKey = getStateKey(event);
+  const state = stateKey ? getInspectionState(stateKey) : null;
+  if (!state) return null;
+
+  setInspectionState(stateKey, null);
+  await replyOrPush({
+    replyToken: event.replyToken,
+    messages: [{ type: 'text', text: 'เริ่มตรวจร้านใหม่ได้เลยครับ พิมพ์ “ตรวจร้าน” ใหม่ แล้วส่งรูปตรวจร้านอีกครั้ง' }],
   });
   return true;
 }

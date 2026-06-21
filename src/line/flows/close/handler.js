@@ -6,6 +6,7 @@ const { logEvent } = require('../../utils/audit');
 const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const { getDisplayName } = require('../../utils/displayName');
+const { buildLineAudit } = require('../../utils/lineAudit');
 const {
   parseDateFromText,
   parseTimeFromText,
@@ -69,7 +70,16 @@ async function handle(event) {
   const stateKey = getCloseStateKey(source);
   const actorInfo = lineUserId ? await resolveLineActor(lineUserId) : null;
   const employee = actorInfo && actorInfo.employee ? actorInfo.employee : null;
+  if (!employee) {
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'ยังไม่พบพนักงานของผู้ปิดร้าน กรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน>' }],
+    });
+    return null;
+  }
+
   const actorName = getDisplayName(employee, actorInfo && actorInfo.user, actorInfo && actorInfo.name, lineUserId);
+  const audit = buildLineAudit({ lineUserId, lineGroupId: source.groupId || source.roomId || null, actor: actorInfo });
   const eventTime = event.timestamp ? new Date(event.timestamp) : new Date();
   const workDate = parseDateFromText(text, eventTime);
 
@@ -92,9 +102,12 @@ async function handle(event) {
   const closeState = {
     status: CLOSE_STATUS.AWAITING_IMAGE,
     employeeId: employee ? employee.id : null,
-    actorType: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? 'user' : actorInfo && actorInfo.type,
-    actorId: actorInfo && actorInfo.user && actorInfo.employeeResolvedBy === 'user_identity' ? actorInfo.user.id : actorInfo && actorInfo.id,
+    actorType: audit.auditActorType,
+    actorId: audit.auditActorId,
     actorName,
+    auditActorType: audit.auditActorType,
+    auditActorId: audit.auditActorId,
+    auditActorName: audit.auditActorName,
     branchId: branch.id,
     branchCode: branch.code,
     lineGroupId,
@@ -206,6 +219,9 @@ async function completeClose({ event, stateKey, state, imageMessageId, imageRece
     messageText: state.messageText,
     submittedAt: state.submittedAt,
     imageMessageId,
+    auditActorType: state.auditActorType,
+    auditActorId: state.auditActorId,
+    auditActorName: state.auditActorName,
   });
   const attachment = inspection && inspection.id
     ? await uploadCloseAttachment({
@@ -260,6 +276,9 @@ async function upsertStoreInspectionClose({
   messageText,
   submittedAt,
   imageMessageId,
+  auditActorType,
+  auditActorId,
+  auditActorName,
 }) {
   const { data: existing, error: selectError } = await supabase
     .from('store_inspections')
@@ -293,6 +312,9 @@ async function upsertStoreInspectionClose({
     line_user_id: lineUserId || null,
     message_text: messageText || null,
     submitted_at: submittedAt || new Date().toISOString(),
+    audit_actor_type: auditActorType || null,
+    audit_actor_id: auditActorId ? String(auditActorId) : null,
+    audit_actor_name: auditActorName || null,
   };
 
   if (existing) {
@@ -478,8 +500,37 @@ function hasActiveCloseImageRequest(event) {
   return hasCloseState(getCloseStateKey(event.source || {}));
 }
 
+async function handleActiveTextMessage(event) {
+  const text = event.message && event.message.type === 'text' ? event.message.text : '';
+  const lower = String(text || '').trim().toLowerCase();
+  const stateKey = getCloseStateKey(event.source || {});
+  const state = stateKey ? getCloseState(stateKey) : null;
+  if (!state || state.status !== CLOSE_STATUS.AWAITING_IMAGE) return false;
+
+  if (lower === 'ยกเลิก') {
+    clearCloseState(stateKey);
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'ยกเลิกคำสั่งปิดร้านแล้วครับ' }],
+    });
+    return true;
+  }
+
+  if (lower.includes('แก้ไข')) {
+    clearCloseState(stateKey);
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'เริ่มปิดร้านใหม่ได้เลยครับ พิมพ์ “ปิดร้าน” พร้อมเวลาใหม่ แล้วส่งรูปหน้าร้านอีกครั้ง' }],
+    });
+    return true;
+  }
+
+  return false;
+}
+
 module.exports = {
   handle,
   handleImageMessage,
+  handleActiveTextMessage,
   hasActiveCloseImageRequest,
 };

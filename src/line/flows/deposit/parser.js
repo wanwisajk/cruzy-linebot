@@ -3,10 +3,24 @@ const { parseDateFromText } = require('../../utils/attendance');
 function parseDepositText(text, fallbackDate) {
   const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const wholeText = lines.join(' ');
-  const result = { amount: 0, bank: null, bankShort: null, branchCode: null, depositDate: parseDateFromText(text, fallbackDate), diff: 0 };
+  const result = {
+    amount: 0,
+    expectedAmount: 0,
+    varianceAmount: 0,
+    bank: null,
+    bankShort: null,
+    branchCode: null,
+    depositDate: parseDateFromText(text, fallbackDate),
+    diff: 0,
+  };
 
-  const amountMatch = findDepositAmount(wholeText);
-  if (amountMatch) result.amount = Number(amountMatch.value.replace(/,/g, ''));
+  const labeledDeposit = findLineAmount(lines, /ยอด\s*ฝาก|ฝาก\s*จริง|deposited|deposit/i);
+  const amountMatch = labeledDeposit || findDepositAmount(wholeText);
+  if (amountMatch) result.amount = parseMoney(amountMatch.value);
+
+  result.expectedAmount = result.amount;
+  result.varianceAmount = result.expectedAmount - result.amount;
+  result.diff = result.varianceAmount;
 
   // bank explicit forms: "bank_short: KBank1" or "ธนาคาร: KBank1"
   for (const line of lines) {
@@ -42,6 +56,18 @@ function parseDepositText(text, fallbackDate) {
   return result;
 }
 
+function findLineAmount(lines, labelPattern) {
+  const amountPattern = '(-?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?)';
+  const flags = labelPattern.ignoreCase ? 'i' : '';
+  const pattern = new RegExp(`(?:${labelPattern.source})\\s*[:=]?\\s*${amountPattern}`, flags);
+
+  for (const line of lines) {
+    const match = String(line || '').match(pattern);
+    if (match && match[1]) return { value: match[1], index: match.index || 0, line };
+  }
+  return null;
+}
+
 function findDepositAmount(text) {
   const normalized = String(text || '');
   const dateLikePattern = /\d{1,4}[\/\-.]\d{1,2}(?:[\/\-.]\d{1,4})?/g;
@@ -52,7 +78,7 @@ function findDepositAmount(text) {
     dateRanges.push([dateMatch.index, dateMatch.index + dateMatch[0].length]);
   }
 
-  const numberPattern = /\d[\d,]*/g;
+  const numberPattern = /(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?/g;
   const candidates = [];
   let match;
 
@@ -62,7 +88,7 @@ function findDepositAmount(text) {
     const insideDate = dateRanges.some(([dateStart, dateEnd]) => start >= dateStart && end <= dateEnd);
     if (insideDate) continue;
 
-    const value = Number(match[0].replace(/,/g, ''));
+    const value = parseMoney(match[0]);
     if (!Number.isFinite(value) || value <= 0) continue;
     candidates.push({ value: match[0], amount: value, index: start });
   }
@@ -75,6 +101,11 @@ function findDepositAmount(text) {
   });
 
   return labeled || candidates[candidates.length - 1];
+}
+
+function parseMoney(value) {
+  const amount = Number(String(value || '').replace(/,/g, ''));
+  return Number.isFinite(amount) ? amount : 0;
 }
 
 module.exports = { parseDepositText };

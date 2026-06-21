@@ -24,6 +24,28 @@ function depositAmountRow(label, amount, color = COLORS.ink) {
   };
 }
 
+function pendingCashText(amount) {
+  const value = Number(amount || 0);
+  const absText = `${Math.abs(value).toLocaleString()} บาท`;
+  if (value > 0) return `ค้างต้องฝาก ${absText}`;
+  if (value < 0) return `เกินฝาก ${absText}`;
+  return 'เคลียร์พอดี';
+}
+
+function pendingCashColor(amount) {
+  const value = Number(amount || 0);
+  if (value > 0) return COLORS.warning || '#D97706';
+  if (value < 0) return COLORS.info || '#2563EB';
+  return COLORS.success;
+}
+
+function varianceColor(amount) {
+  const value = Number(amount || 0);
+  if (value > 0) return COLORS.warning || '#D97706';
+  if (value < 0) return COLORS.info || '#2563EB';
+  return COLORS.success;
+}
+
 // ปรับปรุง Row แสดงข้อมูลทั่วไปให้ตัวหนังสือกระชับสายตา
 function depositInfoRow(label, value, color = COLORS.ink) {
   let emoji = '📌 ';
@@ -53,7 +75,21 @@ function depositInfoRow(label, value, color = COLORS.ink) {
   };
 }
 
-function depositConfirmFlex({ tempId, amount, bank, slipCount, branchCode, submitterName, depositDate }) {
+function depositConfirmFlex({
+  tempId,
+  amount,
+  expectedAmount,
+  varianceAmount,
+  bank,
+  slipCount,
+  branchCode,
+  submitterName,
+  depositDate,
+  coveredDate,
+  pendingCashBalance,
+}) {
+  const pendingColor = pendingCashColor(pendingCashBalance);
+
   return bubble({
     title: '📊 สรุปยอดฝาก',
     subtitle: branchCode ? `สาขา ${String(branchCode)}` : `รายการแบบร่าง #${tempId}`,
@@ -62,11 +98,26 @@ function depositConfirmFlex({ tempId, amount, bank, slipCount, branchCode, submi
     body: [
       card([
         submitterName ? depositInfoRow('ผู้ส่งยอดฝาก', submitterName) : null,
-        depositDate ? depositInfoRow('วันที่ฝาก', depositDate) : null,
+        coveredDate ? depositInfoRow('วันที่ยอดขาย', coveredDate) : null,
+        depositDate ? depositInfoRow('วันที่ฝากจริง', depositDate) : null,
         depositInfoRow('บัญชีปลายทาง', bank || 'ไม่ระบุ'),
         typeof slipCount === 'number' ? depositInfoRow('รูปหลักฐาน', `${slipCount} รูป`, COLORS.info) : null,
-        depositAmountRow('ยอดเงินฝาก', amount)
+        depositAmountRow('ยอดขายเงินสด', expectedAmount != null ? expectedAmount : amount),
+        depositAmountRow('ยอดฝากจริง', amount, COLORS.success),
+        depositAmountRow('เศษคงค้างรายการนี้', varianceAmount || 0, varianceColor(varianceAmount)),
       ].filter(Boolean)),
+      typeof pendingCashBalance === 'number' ? {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: Number(pendingCashBalance || 0) < 0 ? '#EFF6FF' : '#FFF7ED',
+        cornerRadius: 'lg',
+        paddingAll: 'md',
+        margin: 'md',
+        contents: [
+          { type: 'text', text: 'ยอดเงินสดค้างฝากสะสมหลังรายการนี้', color: pendingColor, size: 'xs', weight: 'bold', wrap: true },
+          { type: 'text', text: pendingCashText(pendingCashBalance), color: pendingColor, size: 'lg', weight: 'bold', align: 'end', margin: 'xs', wrap: true },
+        ],
+      } : null,
       // ใช้โครงสร้างกล่อง Hero Stat ไร้ขอบสีเขียวมิ้นต์อ่อนๆ ละมุนตา
       {
         type: 'box',
@@ -95,58 +146,43 @@ function depositConfirmFlex({ tempId, amount, bank, slipCount, branchCode, submi
         color: COLORS.muted,
         wrap: true,
         margin: 'md'
-      }
-    ],
+      },
+    ].filter(Boolean),
     footer: {
       type: 'box',
-      layout: 'horizontal',
-      spacing: 'md',
+      layout: 'vertical',
+      spacing: 'sm',
       contents: [
         primaryButton('ยืนยันส่ง', { type: 'postback', data: `deposit_draft|${tempId}|send` }, COLORS.success),
-        secondaryButton('✏️ แก้ไขข้อมูล', { type: 'postback', data: `deposit_draft|${tempId}|edit` })
+        secondaryButton('แก้ไขข้อมูล', { type: 'postback', data: `deposit_draft|${tempId}|edit` }),
+        secondaryButton('ยกเลิก', { type: 'postback', data: `deposit_draft|${tempId}|cancel` })
       ]
     }
   });
 }
 
-function managerApprovalFlex({
-  depositId,
-  branchCode,
-  depositDate,
-  amount,
-  bankShort,
-  bankName,
-  accountName,
-  accountNo,
-  slipCount,
-  slipUrls,
-  submittedAt,
-  depositedBy,
-}) {
-  const accountLabel = accountName || bankShort || bankName || 'ไม่ระบุ';
-  const accountValue = accountNo ? `${accountLabel} / ${accountNo}` : accountLabel;
-
+function managerApprovalFlex({ depositId }) {
   return bubble({
     title: `⏳ ยอดฝากรออนุมัติ`,
     subtitle: `รายการ #${depositId}`,
     color: COLORS.ink,
     altText: `ยอดฝาก #${depositId} รออนุมัติ`,
     body: [
-      { 
-        type: 'text', 
-        text: 'ตรวจสอบสรุปยอดฝากแล้วกดเลือกดำเนินการ:', 
-        size: 'sm', 
-        color: COLORS.ink, 
-        wrap: true 
-      }
+      {
+        type: 'text',
+        text: 'ตรวจสอบยอดฝาก แล้วกดเลือกดำเนินการ:',
+        size: 'sm',
+        color: COLORS.ink,
+        wrap: true,
+      },
     ],
     footer: {
       type: 'box',
       layout: 'horizontal',
       spacing: 'md',
       contents: [
- primaryButton('✅ อนุมัติ', { type: 'postback', data: `deposit_action|${depositId}|approve` }, COLORS.success),
-            secondaryButton('❌ ไม่อนุมัติ', { type: 'postback', data: `deposit_action|${depositId}|reject` })
+        primaryButton('✅ อนุมัติ', { type: 'postback', data: `deposit_action|${depositId}|approve` }, COLORS.success),
+        secondaryButton('❌ ไม่อนุมัติ', { type: 'postback', data: `deposit_action|${depositId}|reject` })
       ]
     }
   });

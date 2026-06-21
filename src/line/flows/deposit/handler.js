@@ -2,16 +2,93 @@ const depositFlex = require('../../flex/depositFlex');
 const { replyOrPush } = require('../../reply');
 const { parseDepositText } = require('./parser');
 const {
-  getLineMessageContentBuffer,
-  verifyDepositSlip,
   resolveBankAccount,
   resolveBranchBankAccount,
+  fetchSalesCashSnapshot,
 } = require('./service');
+const { getBranchCashPending } = require('../../../../backend/services/branchCashLedger.service');
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./state');
 const { logEvent } = require('../../utils/audit');
 const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const { getDisplayName } = require('../../utils/displayName');
+const { buildLineAudit } = require('../../utils/lineAudit');
+
+function bangkokDateString(date) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function isCancelCommand(text) {
+  return /^ยกเลิก$/i.test(String(text || '').trim());
+}
+
+function isEditCommand(text) {
+  return /แก้ไข/i.test(String(text || '').trim());
+}
+
+function isSendPhotoCommand(text) {
+  return /^(?:ส่งรูป|ส่งสลิป|ส่งรูปสลิป|อัพรูป|อัปโหลดรูป)$/i.test(String(text || '').trim());
+}
+
+function slipPromptMessage() {
+  return {
+    type: 'text',
+    text: 'ส่งรูปสลิปหลักฐานการฝากเงินได้เลย หากต้องแก้ไขให้พิมพ์ “แก้ไข” เพื่อเริ่ม #ฝากเงิน ใหม่ หรือพิมพ์ “ยกเลิก” เพื่อหยุดคำสั่ง',
+    quickReply: {
+      items: [
+        {
+          type: 'action',
+          action: {
+            type: 'cameraRoll',
+            label: 'เลือกรูป',
+          },
+        },
+        {
+          type: 'action',
+          action: {
+            type: 'camera',
+            label: 'ถ่ายรูป',
+          },
+        },
+        {
+          type: 'action',
+          action: {
+            type: 'message',
+            label: 'แก้ไข',
+            text: 'แก้ไข',
+          },
+        },
+        {
+          type: 'action',
+          action: {
+            type: 'message',
+            label: 'ยกเลิก',
+            text: 'ยกเลิก',
+          },
+        },
+      ],
+    },
+  };
+}
+
+async function getPendingCashAfterDeposit(state) {
+  try {
+    const currentPending = await getBranchCashPending(state.branchId);
+    return currentPending - Number(state.amount || 0);
+  } catch (err) {
+    console.warn('Unable to calculate pending cash after deposit:', err.message || err, {
+      branchId: state && state.branchId,
+    });
+    return null;
+  }
+}
 
 async function handle(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
@@ -38,13 +115,16 @@ async function handle(event) {
 
   const pending = getDepositState(actor);
   if (pending && pending.status === DEPOSIT_STATUS.AWAITING_SLIP) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'รอรูปสลิปจากยอดฝากก่อนหน้าก่อนครับ ส่งรูปเพิ่มได้เลย หรือกด "ยืนยันส่ง" เมื่อพร้อม' }] });
-    return;
+    return handleActiveTextMessage(event);
+  }
+
+  if (pending && pending.status === DEPOSIT_STATUS.AWAITING_CONFIRMATION) {
+    return handleActiveTextMessage(event);
   }
 
   const parsed = parseDepositText(text, eventDate);
   if (!parsed.amount || parsed.amount <= 0) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาพิมพ์ยอดฝาก เช่น: ฝากเงิน 18/06 1,500' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาพิมพ์ยอดฝาก เช่น: #ฝากเงิน 15/06/2026 ยอดฝาก 1,500' }] });
     return;
   }
 
@@ -53,17 +133,39 @@ async function handle(event) {
     workDate: parsed.depositDate,
   });
   if (!branch) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <ตัวย่อสาขา> เช่น สาขา CCA หรือพิมพ์เช่น ฝากเงิน CCA 18/06 1,500' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <ตัวย่อสาขา> เช่น สาขา CCA หรือพิมพ์เช่น #ฝากเงิน CCA 15/06/2026 ยอดฝาก 1,500' }] });
     return;
   }
 
+  const salesCash = await fetchSalesCashSnapshot({
+    branchId: branch.id,
+    sellDate: parsed.depositDate,
+  });
+  if (!salesCash.count) {
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: `ยังไม่พบยอดขายเงินสดของสาขา ${branch.code} วันที่ ${parsed.depositDate}\nกรุณาส่ง #ยอดขาย ของวันนั้นก่อน หรือเช็กวันที่ยอดฝากอีกครั้ง` }],
+    });
+    return;
+  }
+
+  const expectedAmount = salesCash.amount;
+  const varianceAmount = expectedAmount - parsed.amount;
+
   const bankAccount = await resolveBankAccount(parsed.bank, parsed.bankShort) || await resolveBranchBankAccount(branch.id);
   const actorName = getDisplayName(actorInfo.employee, actorInfo.user, actorInfo.name, actor);
+  const audit = buildLineAudit({ lineUserId: actor, lineGroupId, actor: actorInfo });
+  const actualDepositDate = bangkokDateString(eventDate);
 
   setDepositState(actor, {
     status: DEPOSIT_STATUS.AWAITING_SLIP,
     amount: parsed.amount,
-    depositDate: parsed.depositDate,
+    expectedAmount,
+    varianceAmount,
+    salesSnapshotCount: salesCash.count,
+    salesSnapshotIds: salesCash.sales.map((sale) => sale.id),
+    depositDate: actualDepositDate,
+    coveredDate: parsed.depositDate,
     bank: parsed.bank,
     bankShort: parsed.bankShort,
     bankAccountId: bankAccount ? bankAccount.id : null,
@@ -77,9 +179,12 @@ async function handle(event) {
     messageText: text,
     submittedAt: eventDate.toISOString(),
     diff: parsed.diff,
-    actorType: actorInfo.type,
-    actorId: actorInfo.id,
+    actorType: audit.auditActorType,
+    actorId: audit.auditActorId,
     actorName,
+    auditActorType: audit.auditActorType,
+    auditActorId: audit.auditActorId,
+    auditActorName: audit.auditActorName,
     employeeId: actorInfo.employee ? actorInfo.employee.id : null,
     employeeName: actorName,
     replyToken: event.replyToken,
@@ -88,33 +193,53 @@ async function handle(event) {
     source: 'line',
   });
 
+  await replyOrPush({ replyToken: event.replyToken, messages: [slipPromptMessage()] });
+}
+
+async function handleActiveTextMessage(event) {
+  const text = event.message && event.message.type === 'text' ? event.message.text : '';
+  const source = event.source || {};
+  const actor = source.userId || null;
+  const state = actor ? getDepositState(actor) : null;
+
+  if (!actor || !state) return null;
+
+  if (isCancelCommand(text)) {
+    setDepositState(actor, null);
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'ยกเลิกรายการฝากเงินแล้วครับ' }],
+    });
+    return true;
+  }
+
+  if (isEditCommand(text)) {
+    setDepositState(actor, null);
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'เริ่มฝากเงินใหม่ได้เลยครับ พิมพ์ #ฝากเงิน พร้อมยอดฝากใหม่ แล้วส่งรูปสลิปอีกครั้ง' }],
+    });
+    return true;
+  }
+
+  if (isSendPhotoCommand(text) && state.status === DEPOSIT_STATUS.AWAITING_SLIP) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [slipPromptMessage()] });
+    return true;
+  }
+
+  if (state.status === DEPOSIT_STATUS.AWAITING_CONFIRMATION) {
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'ตรวจสรุปยอดฝากแล้วกด “ยืนยันส่ง”, “แก้ไขข้อมูล” หรือ “ยกเลิก” ในการ์ดสรุปได้เลยครับ' }],
+    });
+    return true;
+  }
+
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [
-      {
-        type: 'text',
-        text: `ส่งรูปสลิปหลักฐานการฝากเงินได้เลย แล้วระบบจะสรุปยอดฝาก`,
-        quickReply: {
-          items: [
-            {
-              type: 'action',
-              action: {
-                type: 'cameraRoll',
-                label: '📸 เลือกรูป',
-              },
-            },
-            {
-              type: 'action',
-              action: {
-                type: 'camera',
-                label: '📷 ถ่ายรูป',
-              },
-            },
-          ],
-        },
-      },
-    ],
+    messages: [{ type: 'text', text: 'รอรูปสลิปอยู่ครับ ส่งรูปสลิปได้เลย หรือพิมพ์ “แก้ไข” / “ยกเลิก”' }],
   });
+  return true;
 }
 
 async function handleImageMessage(event) {
@@ -134,32 +259,6 @@ async function handleImageMessage(event) {
     return true;
   }
 
-  const buffer = await getLineMessageContentBuffer(messageId);
-  let slipCheck = null;
-  try {
-    slipCheck = await verifyDepositSlip({
-      buffer,
-      expectedAmount: state.amount,
-    });
-  } catch (err) {
-    console.warn('Deposit slip OCR failed:', err.message || err, {
-      messageId,
-      expectedAmount: state.amount,
-    });
-  }
-
-  if (slipCheck && !slipCheck.ok) {
-    let text;
-    if (slipCheck.reason === 'amount_mismatch') {
-      text = `ยอดเงินในสลิปไม่ตรงกับยอดฝากที่พิมพ์ไว้\nยอดที่พิมพ์: ${Number(slipCheck.expectedAmount || state.amount).toLocaleString()} บาท\nยอดในสลิป: ${slipCheck.actualAmount != null ? Number(slipCheck.actualAmount).toLocaleString() : '-'} บาท\nกรุณาส่งรูปสลิปของยอดที่ถูกต้องอีกครั้ง`;
-    } else {
-      text = `อ่านยอดเงินในสลิปไม่ชัดเจน\nยอดที่พิมพ์: ${Number(slipCheck.expectedAmount || state.amount).toLocaleString()} บาท\nกรุณาส่งรูปสลิปที่เห็นยอดเงินชัดเจนอีกครั้ง`;
-    }
-
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text }] });
-    return true;
-  }
-
   const slipMessageIds = Array.isArray(state.slipMessageIds) ? state.slipMessageIds.slice() : [];
   if (!slipMessageIds.includes(messageId)) {
     slipMessageIds.push(messageId);
@@ -172,27 +271,29 @@ async function handleImageMessage(event) {
     ...state,
     status: nextStatus,
     slipMessageIds,
-    slipOcr: slipCheck ? slipCheck.ocr : state.slipOcr,
-    slipAmountVerified: slipCheck ? !slipCheck.skipped : false,
     tempId: String(actor),
   });
 
-  if (state.status === DEPOSIT_STATUS.AWAITING_SLIP) {
-    const confirmFlex = depositFlex.depositConfirmFlex({
-      tempId: actor,
-      amount: state.amount,
-      bank: state.bankAccountName || state.bankShort || state.bank,
-      slipCount: slipMessageIds.length,
-      branchCode: state.branchCode,
-      submitterName: state.employeeName,
-      depositDate: state.depositDate,
-    });
-    await replyOrPush({ replyToken: event.replyToken, messages: [confirmFlex] });
-  }
+  const pendingCashBalance = await getPendingCashAfterDeposit(state);
+  const confirmFlex = depositFlex.depositConfirmFlex({
+    tempId: actor,
+    amount: state.amount,
+    bank: state.bankAccountName || state.bankShort || state.bank,
+    slipCount: slipMessageIds.length,
+    branchCode: state.branchCode,
+    submitterName: state.employeeName,
+    depositDate: state.depositDate,
+    coveredDate: state.coveredDate,
+    expectedAmount: state.expectedAmount,
+    varianceAmount: state.varianceAmount,
+    pendingCashBalance,
+  });
+  await replyOrPush({ replyToken: event.replyToken, messages: [confirmFlex] });
   return true;
 }
 
 module.exports = {
   handle,
   handleImageMessage,
+  handleActiveTextMessage,
 };

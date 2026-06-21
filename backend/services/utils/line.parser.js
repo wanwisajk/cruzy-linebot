@@ -33,6 +33,9 @@ function parseSalesReport(text) {
       if (year < 100) {
         year += 2500;
       }
+      if (year > 2400) {
+        year -= 543;
+      }
       const month = String(parseInt(m, 10)).padStart(2, '0');
       const day = String(parseInt(d, 10)).padStart(2, '0');
       report.date = `${year}-${month}-${day}`;
@@ -40,45 +43,45 @@ function parseSalesReport(text) {
       continue;
     }
 
-    const totalSalesMatch = line.match(/รวมยอดขาย\s*[:\-]?\s*([\d,]+)/i);
+    const totalSalesMatch = line.match(/รวมยอดขาย\s*[:\-]?\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)/i);
     if (totalSalesMatch && !report.totalAmount) {
-      report.totalAmount = Number(totalSalesMatch[1].replace(/,/g, ''));
+      report.totalAmount = parseMoney(totalSalesMatch[1]);
       isInDrawerSection = false;
       continue;
     }
 
-    const amountMatch = line.match(/(?:รวม|total)\s*[:\-]?\s*([\d,]+)/i);
+    const amountMatch = line.match(/(?:รวม|total)\s*[:\-]?\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)/i);
     if (amountMatch && !report.totalAmount && !isInDrawerSection) {
-      report.totalAmount = Number(amountMatch[1].replace(/,/g, ''));
+      report.totalAmount = parseMoney(amountMatch[1]);
       continue;
     }
 
-    const cashMatch = line.match(/เงินสด\s*[:\-]?\s*([\d,]+)/i);
+    const cashMatch = line.match(/เงินสด\s*[:\-]?\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)/i);
     if (cashMatch && !report.cashAmount) {
-      report.cashAmount = Number(cashMatch[1].replace(/,/g, ''));
+      report.cashAmount = parseMoney(cashMatch[1]);
       isInDrawerSection = false;
       continue;
     }
 
-    const creditMatch = line.match(/บัตรเครดิต\s*[:\-]?\s*([\d,]+)/i);
+    const creditMatch = line.match(/บัตรเครดิต\s*[:\-]?\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)/i);
     if (creditMatch && !report.creditAmount) {
-      report.creditAmount = Number(creditMatch[1].replace(/,/g, ''));
+      report.creditAmount = parseMoney(creditMatch[1]);
       isInDrawerSection = false;
       continue;
     }
 
-    const transferMatch = line.match(/โอน(?:เงิน)?\s*[:\-]?\s*([\d,]+)/i);
+    const transferMatch = line.match(/โอน(?:เงิน)?\s*[:\-]?\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)/i);
     if (transferMatch && !report.transferAmount) {
-      report.transferAmount = Number(transferMatch[1].replace(/,/g, ''));
+      report.transferAmount = parseMoney(transferMatch[1]);
       isInDrawerSection = false;
       continue;
     }
 
-    const drawerMatch = line.match(/^(\d+)\s*[-:\u2013\u2014\s]\s*([\d,]+)/);
+    const drawerMatch = line.match(/^(\d+)\s*[-:\u2013\u2014\s]\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)/);
     if (drawerMatch) {
       report.drawer.push({
         denomination: Number(drawerMatch[1]),
-        amount: Number(drawerMatch[2].replace(/,/g, '')),
+        amount: parseMoney(drawerMatch[2]),
       });
       if (isInDrawerSection) {
         drawerLines.push(line);
@@ -89,6 +92,11 @@ function parseSalesReport(text) {
 
   report.drawerRawText = drawerLines.join('\n');
   return report;
+}
+
+function parseMoney(value) {
+  const amount = Number(String(value || '').replace(/,/g, ''));
+  return Number.isFinite(amount) ? amount : 0;
 }
 
 function extractBranchCode(text) {

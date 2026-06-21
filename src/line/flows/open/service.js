@@ -22,6 +22,9 @@ async function recordOpen({
   lineUserId,
   messageText,
   submittedAt,
+  auditActorType,
+  auditActorId,
+  auditActorName,
 }) {
   let inspectionRecord = null;
   let attachment = null;
@@ -80,6 +83,9 @@ async function recordOpen({
         lineUserId,
         messageText: messageText || rawText,
         submittedAt: submittedAt || timestamp,
+        auditActorType,
+        auditActorId,
+        auditActorName,
       });
 
       if (hasImage && (imageMessageId || messageId) && inspectionRecord && inspectionRecord.id) {
@@ -105,7 +111,7 @@ async function recordOpen({
       new_value: record,
       branch_id: branchId || null,
       actor_type: 'line',
-      actor_id: employeeId ? String(employeeId) : null,
+      actor_id: lineUserId || (employeeId ? String(employeeId) : null),
     }]);
   } catch (e) {
     // ignore
@@ -131,6 +137,9 @@ async function upsertStoreInspectionOpen({
   lineUserId,
   messageText,
   submittedAt,
+  auditActorType,
+  auditActorId,
+  auditActorName,
 }) {
   const payload = {
     submitted_by: employeeId || null,
@@ -151,6 +160,9 @@ async function upsertStoreInspectionOpen({
     line_user_id: lineUserId || null,
     message_text: messageText || null,
     submitted_at: submittedAt || new Date().toISOString(),
+    audit_actor_type: auditActorType || null,
+    audit_actor_id: auditActorId ? String(auditActorId) : null,
+    audit_actor_name: auditActorName || null,
   };
 
   const { data: existing, error: selectError } = await supabase

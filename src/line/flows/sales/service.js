@@ -1,5 +1,6 @@
 const { supabase } = require('../../../../backend/config/supabase');
 const { lineClient, blobClient } = require('../../../../backend/config/line');
+const { syncSaleCashLedger, deleteSaleCashLedger } = require('../../../../backend/services/branchCashLedger.service');
 const { logEvent } = require('../../utils/audit');
 
 function isMissingColumnError(error) {
@@ -22,6 +23,9 @@ async function createDraftSale({
   lineUserId,
   submitterIdentity,
   submitterId,
+  auditActorType,
+  auditActorId,
+  auditActorName,
 }) {
   const payload = {
     sell_date: date || new Date().toISOString().slice(0,10),
@@ -38,22 +42,30 @@ async function createDraftSale({
     line_group_id: lineGroupId || null,
     line_user_id: lineUserId || null,
     line_notified: false,
+    audit_actor_type: auditActorType || null,
+    audit_actor_id: auditActorId ? String(auditActorId) : null,
+    audit_actor_name: auditActorName || null,
   };
 
   let { data, error } = await supabase.from('sales').insert([payload]).select('*').single();
   if (error && isMissingColumnError(error)) {
     const fallbackPayload = { ...payload };
     delete fallbackPayload.line_notified;
+    delete fallbackPayload.audit_actor_type;
+    delete fallbackPayload.audit_actor_id;
+    delete fallbackPayload.audit_actor_name;
     const retry = await supabase.from('sales').insert([fallbackPayload]).select('*').single();
     data = retry.data;
     error = retry.error;
   }
   if (error) throw error;
 
+  await syncSaleCashLedger(data);
+
   await logEvent('sales_draft_created', {
     sale_id: data.id,
-    actorType: submitterIdentity || (submittedBy ? 'employee' : 'line'),
-    actorId: submitterId || submittedBy || null,
+    actorType: auditActorType || submitterIdentity || (submittedBy ? 'employee' : 'line'),
+    actorId: auditActorId || submitterId || submittedBy || null,
   });
   return data;
 }
@@ -74,6 +86,12 @@ async function updateSaleStatus(saleId, status) {
   }
   if (error) throw error;
 
+  if (status === 'rejected') {
+    await deleteSaleCashLedger(data.id);
+  } else {
+    await syncSaleCashLedger(data);
+  }
+
   await logEvent('sales_status_updated', { sale_id: saleId, status });
   return data;
 }
@@ -89,6 +107,10 @@ async function updateSaleStatusWithTimestamp(saleId, status, options = {}) {
     payload.confirmed_by = options.confirmedByUsername;
   }
 
+  if (options.auditActorType) payload.audit_actor_type = options.auditActorType;
+  if (options.auditActorId) payload.audit_actor_id = String(options.auditActorId);
+  if (options.auditActorName) payload.audit_actor_name = options.auditActorName;
+
   if (typeof options.lineNotified === 'boolean') {
     payload.line_notified = options.lineNotified;
   } else if (status === 'confirmed' || status === 'rejected') {
@@ -102,6 +124,9 @@ async function updateSaleStatusWithTimestamp(saleId, status, options = {}) {
       confirmed_at: payload.confirmed_at,
       updated_at: payload.updated_at,
     };
+    if (options.auditActorType) fallbackPayload.audit_actor_type = options.auditActorType;
+    if (options.auditActorId) fallbackPayload.audit_actor_id = String(options.auditActorId);
+    if (options.auditActorName) fallbackPayload.audit_actor_name = options.auditActorName;
     if (typeof options.lineNotified === 'boolean') {
       fallbackPayload.line_notified = options.lineNotified;
     }
@@ -115,6 +140,12 @@ async function updateSaleStatusWithTimestamp(saleId, status, options = {}) {
     error = retry.error;
   }
   if (error) throw error;
+
+  if (status === 'rejected') {
+    await deleteSaleCashLedger(data.id);
+  } else {
+    await syncSaleCashLedger(data);
+  }
 
   await logEvent('sales_status_updated', {
     sale_id: saleId,

@@ -53,19 +53,35 @@ function salesInfoRow(label, value, color = COLORS.ink) {
   };
 }
 
-function salesSummaryFlex({ branchCode, submitterName, cash, credit, transfer, total, imageCount }) {
+function salesSummaryFlex({ branchCode, submitterName, sellDate, cash, credit, transfer, total, drawerTotal, imageCount, mode = 'final' }) {
+  const isFinal = mode === 'final';
+  const footerButtons = isFinal
+    ? [
+        primaryButton('ยืนยันส่ง', { type: 'message', text: 'ยืนยันส่ง' }, COLORS.success),
+        secondaryButton('ส่งรูปเพิ่ม', { type: 'message', text: 'ส่งรูป' }),
+        secondaryButton('แก้ไข', { type: 'message', text: 'แก้ไขข้อมูล' }),
+        secondaryButton('ยกเลิก', { type: 'message', text: 'ยกเลิก' }),
+      ]
+    : [
+        primaryButton('ส่งรูป', { type: 'message', text: 'ส่งรูป' }, COLORS.success),
+        secondaryButton('แก้ไข', { type: 'message', text: 'แก้ไขข้อมูล' }),
+        secondaryButton('ยกเลิก', { type: 'message', text: 'ยกเลิก' }),
+      ];
+
   return bubble({
-    title: '📊 สรุปยอดขาย',
+    title: isFinal ? '📊 สรุปยอดขายก่อนส่ง' : '🧾 ตรวจยอดขาย',
     subtitle: `สาขา ${String(branchCode || '-')}`,
     color: COLORS.teal,
     altText: `สรุปยอดขาย สาขา ${branchCode}`,
     body: [
       card([
         salesInfoRow('ผู้ส่งยอดขาย', submitterName || 'ไม่ระบุ'),
+        sellDate ? salesInfoRow('วันที่ขาย', sellDate) : null,
         typeof imageCount === 'number' ? salesInfoRow('รูปหลักฐาน', `${imageCount} รูป`, COLORS.info) : null,
         salesAmountRow('เงินสด', cash),
         salesAmountRow('เครดิต', credit),
-        salesAmountRow('โอนเงิน', transfer)
+        salesAmountRow('โอนเงิน', transfer),
+        Number(drawerTotal || 0) > 0 ? salesAmountRow('เงินในลิ้นชัก', drawerTotal, COLORS.warning) : null,
       ].filter(Boolean)),
       // ใช้โครงสร้างกล่อง Hero Stat ไร้ขอบสีเขียวมิ้นต์อ่อนๆ ละมุนตา
       {
@@ -90,7 +106,9 @@ function salesSummaryFlex({ branchCode, submitterName, cash, credit, transfer, t
       },
       {
         type: 'text',
-        text: 'ตรวจยอดและรูปแนบให้ถูกต้อง แล้วกดยืนยันส่งเพื่อส่งให้ผู้จัดการอนุมัติ',
+        text: isFinal
+          ? 'ตรวจยอดและรูปแนบให้ถูกต้อง แล้วกดยืนยันส่งเพื่อส่งให้ผู้จัดการอนุมัติ'
+          : 'ตรวจยอดให้ถูกต้องก่อนส่งรูป หากข้อมูลผิดให้กดแก้ไขข้อมูล แล้วพิมพ์ยอดขายใหม่อีกครั้ง',
         size: 'xs',
         color: COLORS.muted,
         wrap: true,
@@ -99,12 +117,9 @@ function salesSummaryFlex({ branchCode, submitterName, cash, credit, transfer, t
     ],
     footer: {
       type: 'box',
-      layout: 'horizontal',
-      spacing: 'md',
-      contents: [
-        primaryButton('ยืนยันส่ง', { type: 'message', text: 'ยืนยันส่ง' }, COLORS.success),
-        secondaryButton('✏️ แก้ไขข้อมูล', { type: 'message', text: 'แก้ไข' })
-      ]
+      layout: footerButtons.length > 2 ? 'vertical' : 'horizontal',
+      spacing: 'sm',
+      contents: footerButtons
     }
   });
 }

@@ -55,6 +55,9 @@ async function createInspection({
   lineUserId,
   messageText,
   submittedAt,
+  auditActorType,
+  auditActorId,
+  auditActorName,
 }) {
   const { data: existing, error: selectError } = await supabase
     .from('store_inspections')
@@ -89,6 +92,9 @@ async function createInspection({
     message_text: messageText || null,
     submitted_at: submittedAt || null,
     created_at: submittedAt || new Date().toISOString(),
+    audit_actor_type: auditActorType || null,
+    audit_actor_id: auditActorId ? String(auditActorId) : null,
+    audit_actor_name: auditActorName || null,
   };
 
   if (existing) {
@@ -243,6 +249,7 @@ async function updateInspectionReview({ inspectionId, status, reviewedBy, review
 
   if (actorType) payload.audit_actor_type = actorType;
   if (actorId) payload.audit_actor_id = String(actorId);
+  if (reviewedBy) payload.audit_actor_name = reviewedBy;
 
   const { data, error } = await supabase
     .from('store_inspections')
@@ -256,6 +263,7 @@ async function updateInspectionReview({ inspectionId, status, reviewedBy, review
       const fallbackPayload = { ...payload };
       delete fallbackPayload.audit_actor_type;
       delete fallbackPayload.audit_actor_id;
+      delete fallbackPayload.audit_actor_name;
 
       const retry = await supabase
         .from('store_inspections')

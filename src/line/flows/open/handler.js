@@ -5,6 +5,7 @@ const { replyOrPush } = require('../../reply');
 const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const { getDisplayName } = require('../../utils/displayName');
+const { buildLineAudit } = require('../../utils/lineAudit');
 const {
   getBranchScheduleWindow,
   ensureAttendanceAlert,
@@ -63,7 +64,16 @@ async function handle(event) {
 
   const actor = lineUserId ? await resolveLineActor(lineUserId) : null;
   const employee = actor && actor.employee ? actor.employee : null;
+  if (!employee) {
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'ยังไม่พบพนักงานของผู้เปิดร้าน กรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน>' }],
+    });
+    return null;
+  }
+
   const employeeName = getDisplayName(employee, actor && actor.user, actor && actor.name, lineUserId);
+  const audit = buildLineAudit({ lineUserId, lineGroupId: source.groupId || source.roomId || null, actor });
   const eventTime = event.timestamp ? new Date(event.timestamp) : new Date();
   const workDate = parseDateFromText(parsed.text, eventTime);
   const { branch, lineGroupId } = await resolveBranchFromEvent(event, parsed.text, {
@@ -102,6 +112,9 @@ async function handle(event) {
     expectedTime: schedule.shiftStart,
     lateBy,
     target: getReplyTarget(source),
+    auditActorType: audit.auditActorType,
+    auditActorId: audit.auditActorId,
+    auditActorName: audit.auditActorName,
   };
 
   if (pendingImage && pendingImage.messageId) {
@@ -138,6 +151,9 @@ async function completeOpen({ event, stateKey, state, imageMessageId, imageRecei
     submittedAt: state.submittedAt,
     timestamp: state.eventTimestamp,
     rawText: state.messageText,
+    auditActorType: state.auditActorType,
+    auditActorId: state.auditActorId,
+    auditActorName: state.auditActorName,
   });
 
   if (state.lateBy > 0 && state.employeeId && state.branchId) {
@@ -203,8 +219,37 @@ function hasActiveOpenImageRequest(event) {
   return hasOpenState(getOpenStateKey(event.source || {}));
 }
 
+async function handleActiveTextMessage(event) {
+  const text = event.message && event.message.type === 'text' ? event.message.text : '';
+  const lower = String(text || '').trim().toLowerCase();
+  const stateKey = getOpenStateKey(event.source || {});
+  const state = stateKey ? getOpenState(stateKey) : null;
+  if (!state || state.status !== OPEN_STATUS.AWAITING_IMAGE) return false;
+
+  if (lower === 'ยกเลิก') {
+    clearOpenState(stateKey);
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'ยกเลิกคำสั่งเปิดร้านแล้วครับ' }],
+    });
+    return true;
+  }
+
+  if (lower.includes('แก้ไข')) {
+    clearOpenState(stateKey);
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: 'เริ่มเปิดร้านใหม่ได้เลยครับ พิมพ์ “เปิดร้าน” พร้อมเวลาใหม่ แล้วส่งรูปหน้าร้านอีกครั้ง' }],
+    });
+    return true;
+  }
+
+  return false;
+}
+
 module.exports = {
   handle,
   handleImageMessage,
+  handleActiveTextMessage,
   hasActiveOpenImageRequest,
 };

@@ -1,4 +1,5 @@
 const { supabase } = require('../config/supabase');
+const { syncSaleCashLedger } = require('../services/branchCashLedger.service');
 
 async function createSale(sale) {
   const { data, error } = await supabase
@@ -11,6 +12,7 @@ async function createSale(sale) {
     throw error;
   }
 
+  await syncSaleCashLedger(data);
   return data;
 }
 

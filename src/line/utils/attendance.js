@@ -20,9 +20,9 @@ function parseDateFromText(text, fallbackDate = new Date()) {
     return `${iso[1]}-${pad(iso[2])}-${pad(iso[3])}`;
   }
 
-  const slash = raw.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/);
+  const slash = raw.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/);
   if (slash) {
-    let year = Number(slash[3]);
+    let year = slash[3] ? Number(slash[3]) : fallbackDate.getFullYear();
     if (year < 100) year += 2000;
     if (year > 2400) year -= 543;
     return `${year}-${pad(slash[2])}-${pad(slash[1])}`;

@@ -112,13 +112,11 @@ async function uploadLeaveAttachment({ leaveId, message }) {
 
 async function updateLeaveStatus(leaveId, status, actor, options = {}) {
   const decidedAt = options.decidedAt || new Date().toISOString();
-  const editedBy = options.editedBy || options.decidedBy || actor || null;
   const payload = {
     status,
     decided_by: options.decidedBy || actor || null,
     decided_at: decidedAt,
     updated_at: decidedAt,
-    edited_by: editedBy,
     line_notified: false,
   };
 
@@ -136,7 +134,6 @@ async function updateLeaveStatus(leaveId, status, actor, options = {}) {
   if (error && isMissingColumnError(error)) {
     const fallbackPayload = { ...payload };
     delete fallbackPayload.updated_at;
-    delete fallbackPayload.edited_by;
     delete fallbackPayload.line_notified;
 
     const retry = await supabase

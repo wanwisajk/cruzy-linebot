@@ -15,6 +15,7 @@ const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const { parseDateFromText } = require('../../utils/attendance');
 const { getDisplayName } = require('../../utils/displayName');
+const { buildLineAudit } = require('../../utils/lineAudit');
 const employeeRepo = require('../../../../backend/repositories/employee.repo');
 const {
   LEAVE_STATUS,
@@ -167,6 +168,7 @@ async function handle(event) {
   }
 
   if (lower === 'ยกเลิก') return cancelLeave(event);
+  if (lower.includes('แก้ไข') && state) return editLeave(event);
   if (/^(ติดตามสถานะ|เช็คสถานะ|ตรวจสถานะ|สถานะลา|ติดตามลา)$/i.test(text)) return trackLeaveStatus(event);
   if (lower === 'เสร็จ' || lower === 'ข้าม') return finishAttachments(event, lower === 'ข้าม');
   if (lower === 'ยืนยันส่ง') return submitLeave(event);
@@ -326,10 +328,14 @@ async function startLeave(event) {
     return null;
   }
 
-  const actingAsUser = requestedByUser && actor.user;
-  const actorType = actingAsUser ? 'user' : actor.type;
-  const actorId = actingAsUser ? actor.user.id : actor.id;
-  const actorName = getDisplayName(actingAsUser ? actor.user : null, actor.employee, actor.name, lineUserId);
+  const audit = buildLineAudit({
+    lineUserId,
+    lineGroupId: source.groupId || source.roomId || null,
+    actor,
+  });
+  const actorType = audit.auditActorType;
+  const actorId = audit.auditActorId;
+  const actorName = audit.auditActorName;
 
   setLeaveState(stateKey, {
     status: LEAVE_STATUS.AWAITING_TYPE,
@@ -557,6 +563,20 @@ async function cancelLeave(event) {
     buttonText: 'แจ้งลางาน',
     color: '#6B7280',
     altText: 'ยกเลิกคำขอ',
+  })] });
+  return true;
+}
+
+async function editLeave(event) {
+  const stateKey = getStateKey(event);
+  if (stateKey) setLeaveState(stateKey, null);
+  await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
+    title: 'พร้อมเริ่มคำขอลาใหม่',
+    message: 'พิมพ์ “แจ้งลางาน” ใหม่ แล้วกรอกข้อมูลหรือส่งเอกสารแนบอีกครั้ง',
+    buttonLabel: 'เริ่มใหม่',
+    buttonText: 'แจ้งลางาน',
+    color: '#2563EB',
+    altText: 'พร้อมเริ่มคำขอลาใหม่',
   })] });
   return true;
 }
