@@ -107,7 +107,7 @@ async function handle(event) {
       replyToken: event.replyToken,
       messages: [{
         type: 'text',
-        text: 'ยังไม่พบพนักงานของผู้ฝาก ระบบต้องใช้ employees.id เพื่อบันทึกลง cash_deposits.deposited_by\nกรุณาผูก LINE ด้วยคำสั่ง: พนักงาน <รหัสพนักงาน> หรือกำหนด users.scope_type = employee และ users.scope_value = รหัสพนักงาน',
+        text: 'ยังไม่พบพนักงานของผู้ฝาก ระบบต้องใช้ employees.id เพื่อบันทึกลง cash_deposits.deposited_by\nกรุณาผูก LINE ด้วยคำสั่ง: #พนักงาน <รหัสพนักงาน> หรือกำหนด users.scope_type = employee และ users.scope_value = รหัสพนักงาน',
       }],
     });
     return;
@@ -124,7 +124,7 @@ async function handle(event) {
 
   const parsed = parseDepositText(text, eventDate);
   if (!parsed.amount || parsed.amount <= 0) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาพิมพ์ยอดฝาก เช่น: #ฝากเงิน 15/06/2026 ยอดฝาก 1,500' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'กรุณาพิมพ์ฝากเงิน เช่น: #ฝากเงิน 15/06/2026 ฝากเงิน 1,500' }] });
     return;
   }
 
@@ -133,7 +133,7 @@ async function handle(event) {
     workDate: parsed.depositDate,
   });
   if (!branch) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: สาขา <ตัวย่อสาขา> เช่น สาขา CCA หรือพิมพ์เช่น #ฝากเงิน CCA 15/06/2026 ยอดฝาก 1,500' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ไม่พบสาขา กรุณาผูกกลุ่มด้วยคำสั่ง: #สาขา <ตัวย่อสาขา> เช่น #สาขา CCA หรือพิมพ์เช่น #ฝากเงิน CCA 15/06/2026 ฝากเงิน 1,500' }] });
     return;
   }
 
@@ -144,7 +144,7 @@ async function handle(event) {
   if (!salesCash.count) {
     await replyOrPush({
       replyToken: event.replyToken,
-      messages: [{ type: 'text', text: `ยังไม่พบยอดขายเงินสดของสาขา ${branch.code} วันที่ ${parsed.depositDate}\nกรุณาส่ง #ยอดขาย ของวันนั้นก่อน หรือเช็กวันที่ยอดฝากอีกครั้ง` }],
+      messages: [{ type: 'text', text: `ยังไม่พบยอดขายเงินสดของสาขา ${branch.code} วันที่ ${parsed.depositDate}\nกรุณาส่ง #ยอดขาย ของวันนั้นก่อน หรือเช็กวันที่ฝากเงินอีกครั้ง` }],
     });
     return;
   }
@@ -217,7 +217,7 @@ async function handleActiveTextMessage(event) {
     setDepositState(actor, null);
     await replyOrPush({
       replyToken: event.replyToken,
-      messages: [{ type: 'text', text: 'เริ่มฝากเงินใหม่ได้เลยครับ พิมพ์ #ฝากเงิน พร้อมยอดฝากใหม่ แล้วส่งรูปสลิปอีกครั้ง' }],
+      messages: [{ type: 'text', text: 'เริ่มฝากเงินใหม่ได้เลยครับ พิมพ์ #ฝากเงิน พร้อมจำนวนเงินใหม่ แล้วส่งรูปสลิปอีกครั้ง' }],
     });
     return true;
   }
@@ -230,7 +230,7 @@ async function handleActiveTextMessage(event) {
   if (state.status === DEPOSIT_STATUS.AWAITING_CONFIRMATION) {
     await replyOrPush({
       replyToken: event.replyToken,
-      messages: [{ type: 'text', text: 'ตรวจสรุปยอดฝากแล้วกด “ยืนยันส่ง”, “แก้ไขข้อมูล” หรือ “ยกเลิก” ในการ์ดสรุปได้เลยครับ' }],
+      messages: [{ type: 'text', text: 'ตรวจสรุปฝากเงินแล้วกด “ยืนยันส่ง”, “แก้ไขข้อมูล” หรือ “ยกเลิก” ในการ์ดสรุปได้เลยครับ' }],
     });
     return true;
   }

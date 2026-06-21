@@ -117,9 +117,9 @@ async function handleTextMessage(event) {
     await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
       title: 'ยังไม่พบพนักงานของผู้ส่ง',
       subtitle: 'ต้องเชื่อมกับ employees ก่อนบันทึกยอดขาย',
-      message: 'ระบบต้องใช้ employees.id เพื่อบันทึกลง sales.submitted_by กรุณาผูก LINE ด้วยคำสั่ง พนักงาน <รหัสพนักงาน> หรือกำหนด users.scope_type = employee และ users.scope_value = รหัสพนักงาน',
+      message: 'ระบบต้องใช้ employees.id เพื่อบันทึกลง sales.submitted_by กรุณาผูก LINE ด้วยคำสั่ง #พนักงาน <รหัสพนักงาน> หรือกำหนด users.scope_type = employee และ users.scope_value = รหัสพนักงาน',
       buttonLabel: 'วิธีผูก',
-      buttonText: 'พนักงาน <รหัสพนักงาน>',
+      buttonText: '#พนักงาน <รหัสพนักงาน>',
       color: '#B91C1C',
       altText: 'ยังไม่พบพนักงานของผู้ส่ง',
     })] });
@@ -142,9 +142,9 @@ async function handleTextMessage(event) {
     await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
       title: 'ไม่พบสาขา',
       subtitle: 'กรุณากำหนดสาขากลุ่มก่อน',
-      message: 'สาขายังไม่ถูกผูกกับกลุ่มนี้ โปรดใช้คำสั่ง: สาขา <ตัวย่อสาขา> เช่น สาขา CCA หรือพิมพ์ #ยอดขาย CCA',
+      message: 'สาขายังไม่ถูกผูกกับกลุ่มนี้ โปรดใช้คำสั่ง: #สาขา <ตัวย่อสาขา> เช่น #สาขา CCA หรือพิมพ์ #ยอดขาย CCA',
       buttonLabel: 'สาขา CCA',
-      buttonText: 'สาขา CCA',
+      buttonText: '#สาขา CCA',
       color: '#EA580C',
       altText: 'ไม่พบสาขา',
     })] });
@@ -414,17 +414,20 @@ async function handleConfirmation(event) {
       // ส่ง flex พร้อมปุ่มอนุมัติ/ปฏิเสธทันทีในกลุ่มเดียวกัน
       await replyOrPush({
         replyToken: event.replyToken,
-        messages: [ managerApprovalFlex({
-          saleId: sale.id,
-          branchCode: flowState.branch_code,
-          submitterName: flowState.submitter_name,
-          cash: flowState.parsed_data.cash_amount,
-          credit: flowState.parsed_data.credit_amount,
-          transfer: flowState.parsed_data.transfer_amount,
-          total: flowState.parsed_data.total_sales,
-          imageCount: messageIds.length,
-          attachmentUrls,
-        }) ]
+        messages: [
+          { type: 'text', text: 'บันทึกยอดขายแล้ว ระบบจะส่งแจ้งเตือนผู้อนุมัติอัตโนมัติ' },
+          managerApprovalFlex({
+            saleId: sale.id,
+            branchCode: flowState.branch_code,
+            submitterName: flowState.submitter_name,
+            cash: flowState.parsed_data.cash_amount,
+            credit: flowState.parsed_data.credit_amount,
+            transfer: flowState.parsed_data.transfer_amount,
+            total: flowState.parsed_data.total_sales,
+            imageCount: messageIds.length,
+            attachmentUrls,
+          }),
+        ]
       });
 
       return;
@@ -505,15 +508,10 @@ async function handleEditFlow(event) {
   }
 
   setFlowState(lineUserId, null);
-  await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
-    title: 'พร้อมเริ่มยอดขายใหม่',
-    subtitle: 'รายการเดิมถูกล้างแล้ว',
-    message: 'พิมพ์ #ยอดขาย พร้อมรายละเอียดใหม่อีกครั้ง จากนั้นส่งรูปหลักฐานใหม่ แล้วพิมพ์ "ส่งรูปเสร็จ"',
-    buttonLabel: 'ตัวอย่างคำสั่ง',
-    buttonText: '#ยอดขาย',
-    color: '#2563EB',
-    altText: 'พร้อมเริ่มยอดขายใหม่',
-  })] });
+  await replyOrPush({
+    replyToken: event.replyToken,
+    messages: [{ type: 'text', text: 'เริ่มยอดขายใหม่ได้เลยครับ พิมพ์ #ยอดขาย พร้อมยอดขายใหม่ แล้วส่งรูปหลักฐานอีกครั้ง' }],
+  });
 }
 module.exports = { 
   handleTextMessage, 

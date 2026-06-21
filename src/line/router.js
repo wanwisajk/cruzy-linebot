@@ -11,13 +11,12 @@ const employeeHandler = require('./flows/employee/handler');
 const { replyOrPush } = require('./reply');
 const linkHandler = require('./flows/link/handler');
 const { logInboundLineEvent } = require('./utils/audit');
-const { hasInspectionState } = require('./flows/inspect/state');
 const { hasLeaveState } = require('./flows/leave/state');
 const leaveHandler = require('./flows/leave/handler');
 const scheduleHandler = require('./flows/schedule/handler');
 
 function isOpenShopCommand(text) {
-  return /เปิด\s*ร้าน/i.test(text);
+  return /^#\s*เปิด\s*ร้าน(?:\s|$)/i.test(String(text || '').trim());
 }
 
 function isPrivateEvent(event) {
@@ -26,7 +25,7 @@ function isPrivateEvent(event) {
 }
 
 function isCloseShopCommand(text) {
-  return /ปิด\s*ร้าน/i.test(text) || /ปิด้ราน/i.test(text) || /ปิดราน/i.test(text);
+  return /^#\s*(?:ปิด\s*ร้าน|ปิด้ราน|ปิดราน)(?:\s|$)/i.test(String(text || '').trim());
 }
 
 function isLeaveTypeText(text) {
@@ -34,15 +33,43 @@ function isLeaveTypeText(text) {
 }
 
 function isLeaveStartCommand(text) {
-  return /^(?:แจ้งลางาน|ขอลา)$/i.test(String(text || '').trim());
+  return /^#\s*(?:ขอลางาน|ขอลา|แจ้งลางาน)(?:\s|$)/i.test(String(text || '').trim());
 }
 
 function isDepositCommand(text) {
-  return /(^|\s)#ฝากเงิน(?:\s|$)/i.test(String(text || ''));
+  return /^#\s*ฝากเงิน(?:\s|$)/i.test(String(text || '').trim());
 }
 
-function getScopedStateKeys(source = {}) {
-  return [source.groupId, source.roomId, source.userId].filter(Boolean);
+function isSalesCommand(text) {
+  return /^#\s*ยอดขาย(?:\s|$)/i.test(String(text || '').trim());
+}
+
+function isScheduleCommand(text) {
+  return /^#\s*(?:ตาราง|ตารางงาน|ตารางคนขาด|schedule)(?:\s|$)/i.test(String(text || '').trim());
+}
+
+function isInspectCommand(text) {
+  return /^#\s*ตรวจ\s*ร้าน(?:\s|$)/i.test(String(text || '').trim());
+}
+
+function isPayrollCommand(text) {
+  return /^#\s*เงินเดือน(?:\s|$)/i.test(String(text || '').trim());
+}
+
+function isWarningCommand(text) {
+  return /^#\s*หนังสือเตือน(?:\s|$)/i.test(String(text || '').trim());
+}
+
+function isAttendanceAlertCommand(text) {
+  return /^#\s*(?:แจ้งเตือน|มาสาย|ขาดงาน)(?:\s|$)/i.test(String(text || '').trim());
+}
+
+function isLeaveStatusCommand(text) {
+  return /^#\s*(?:ติดตามสถานะ|เช็คสถานะ|ตรวจสถานะ|สถานะลา|ติดตามลา)(?:\s|$)/i.test(String(text || '').trim());
+}
+
+function isCommandListCommand(text) {
+  return /^#\s*(?:คำสั่ง|help)(?:\s|$)/i.test(String(text || '').trim());
 }
 
 async function handleEvent(event) {
@@ -66,10 +93,6 @@ async function handleEvent(event) {
       const lineUserId = source.userId || null;
       if (lineUserId && isPrivateEvent(event) && hasLeaveState(lineUserId)) {
         return leaveHandler.handleAttachmentMessage(event);
-      }
-      if (getScopedStateKeys(source).some((key) => hasInspectionState(key))) {
-        if (event.message.type !== 'image') return null;
-        return inspectHandler.handleImageMessage(event);
       }
       if (event.message.type === 'file') return null;
       const depositState = lineUserId ? getDepositState(lineUserId) : null;
@@ -102,46 +125,46 @@ async function handleEvent(event) {
     const lower = String(text || '').trim().toLowerCase();
 
     // Commands
-    if (lower === 'คำสั่ง' || lower === 'help') {
+    if (isCommandListCommand(text)) {
       return replyOrPush({ replyToken: event.replyToken, messages: [commandFlex()] });
     }
 
-    if (/^สาขา\s+[A-Za-z][A-Za-z0-9_-]{1,15}$/i.test(text.trim())) {
+    if (/^#\s*สาขา\s+[A-Za-z][A-Za-z0-9_-]{1,15}$/i.test(text.trim())) {
       console.log('🔗 Routing to branch LINE group link');
       return linkHandler.handleBranchLink(event);
     }
 
-    if (/^แอดมิน\s+\S{1,255}$/i.test(text.trim())) {
+    if (/^#\s*แอดมิน\s+\S{1,255}$/i.test(text.trim())) {
       console.log('🔗 Routing to admin LINE user link');
       return linkHandler.handleAdminLink(event);
     }
 
-    if (/^(?:พนักงาน|register)\s+\S{1,255}$/i.test(text.trim())) {
+    if (/^#\s*(?:พนักงาน|register)\s+\S{1,255}$/i.test(text.trim())) {
       console.log('🔗 Routing to register handler');
       return registerHandler.handle(event);
     }
 
-    if (/^ตาราง/i.test(text.trim()) || /^schedule\b/i.test(text.trim())) {
+    if (isScheduleCommand(text)) {
       console.log('📅 Routing to schedule handler');
       return scheduleHandler.handle(event);
     }
 
-    if (lower.includes('เงินเดือน')) {
+    if (isPayrollCommand(text)) {
       console.log('💵 Routing to payroll self-service');
       return employeeHandler.handlePayroll(event);
     }
 
-    if (lower.includes('หนังสือเตือน')) {
+    if (isWarningCommand(text)) {
       console.log('📄 Routing to warning self-service');
       return employeeHandler.handleWarning(event);
     }
 
-    if (lower.includes('แจ้งเตือน') || lower.includes('มาสาย') || lower.includes('ขาดงาน')) {
+    if (isAttendanceAlertCommand(text)) {
       console.log('⚠️ Routing to attendance alert self-service');
       return employeeHandler.handleAttendanceAlert(event);
     }
 
-    if (/^(ติดตามสถานะ|เช็คสถานะ|ตรวจสถานะ|สถานะลา|ติดตามลา)$/i.test(String(text || '').trim())) {
+    if (isLeaveStatusCommand(text)) {
       if (!isPrivateEvent(event)) {
         return replyOrPush({
           replyToken: event.replyToken,
@@ -235,55 +258,14 @@ async function handleEvent(event) {
       return openHandler.handleActiveTextMessage(event);
     }
 
-    const hasActiveInspection = getScopedStateKeys(event.source || {}).some((key) => hasInspectionState(key));
-
-    if (
-      hasActiveInspection &&
-      (lower === 'ยกเลิก' || lower.includes('แก้ไข'))
-    ) {
-      console.log('🔍 Routing to active inspect flow control');
-      return inspectHandler.handle(event);
-    }
-
-    if (lower === 'ตรวจเสร็จ' || (lower === 'ยืนยันส่ง' && hasActiveInspection)) {
-      console.log('🔍 Routing to active inspect flow');
-      return inspectHandler.handle(event);
-    }
-
-    if (
-      hasActiveInspection &&
-      (lower.includes('ส่งรูป') || lower.includes('อัพรูป') || lower.includes('อัปโหลดรูป'))
-    ) {
-      return replyOrPush({
-        replyToken: event.replyToken,
-        messages: [{ type: 'text', text: 'ส่งรูปตรวจร้านในแชทนี้ได้เลย เมื่อครบแล้วพิมพ์ “ตรวจเสร็จ”' }],
-      });
-    }
-
-if (
-  lower.includes('ยืนยัน') ||
-  lower === 'บันทึกยอดขาย'
-) {
-  console.log('✅ Routing to sales confirmation');
-
-  const { handleConfirmation } = require('./flows/sales/handler');
-
-  return handleConfirmation && handleConfirmation(event);
-}
-
-    if (lower.includes('ตรวจร้าน')) {
+    if (isInspectCommand(text)) {
       console.log('🔍 Routing to inspect handler');
       return inspectHandler.handle(event);
     }
 
-    if (/^\s*#ยอดขาย(?:\s|$)/i.test(text)) {
+    if (isSalesCommand(text)) {
       console.log('💰 Routing to sales handler');
       return handleTextMessage(event);
-    }
-
-    if (lower.includes('ส่งรูป') || lower.includes('อัพรูป') || lower.includes('อัปโหลดรูป')) {
-      console.log('📤 Routing to sales upload prompt');
-      return handleUploadPrompt && handleUploadPrompt(event);
     }
 
     if (isDepositCommand(text)) {

@@ -7,9 +7,9 @@ async function handle(event) {
   const source = event.source || {};
   const lineUserId = source.userId || null;
 
-  const match = text.trim().match(/^(?:พนักงาน|register)\s+(\S{1,255})$/i);
+  const match = text.trim().match(/^#\s*(?:พนักงาน|register)\s+(\S{1,255})$/i);
   if (!match) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: พนักงาน <รหัสพนักงาน> เช่น พนักงาน EMP001' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: #พนักงาน <รหัสพนักงาน> เช่น #พนักงาน EMP001' }] });
     return;
   }
 

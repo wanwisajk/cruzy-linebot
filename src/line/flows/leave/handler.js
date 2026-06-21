@@ -7,6 +7,7 @@ const {
   uploadLeaveAttachment,
   fetchLeaveById,
   fetchLatestPendingLeaveForEmployee,
+  fetchLatestLeaveForEmployee,
   countLeaveAttachments,
   findAreaApproversForLeave,
 } = require('./service');
@@ -39,7 +40,7 @@ function isPrivateEvent(event) {
 }
 
 function isLeaveStartCommand(text) {
-  return /^(?:แจ้งลางาน|ขอลา)$/i.test(String(text || '').trim());
+  return /^#\s*(?:ขอลางาน|ขอลา|แจ้งลางาน)(?:\s|$)/i.test(String(text || '').trim());
 }
 
 function normalizeLeaveType(type) {
@@ -169,7 +170,7 @@ async function handle(event) {
 
   if (lower === 'ยกเลิก') return cancelLeave(event);
   if (lower.includes('แก้ไข') && state) return editLeave(event);
-  if (/^(ติดตามสถานะ|เช็คสถานะ|ตรวจสถานะ|สถานะลา|ติดตามลา)$/i.test(text)) return trackLeaveStatus(event);
+  if (/^#?\s*(ติดตามสถานะ|เช็คสถานะ|ตรวจสถานะ|สถานะลา|ติดตามลา)$/i.test(text)) return trackLeaveStatus(event);
   if (lower === 'เสร็จ' || lower === 'ข้าม') return finishAttachments(event, lower === 'ข้าม');
   if (lower === 'ยืนยันส่ง') return submitLeave(event);
   if (state && state.status === LEAVE_STATUS.AWAITING_DETAILS) return receiveDetails(event);
@@ -241,42 +242,68 @@ async function trackLeaveStatus(event) {
       title: 'ยังไม่พบพนักงาน',
       message: 'กรุณาผูก LINE กับพนักงานก่อนเช็คสถานะคำขอลา',
       buttonLabel: 'วิธีผูก',
-      buttonText: 'พนักงาน <รหัสพนักงาน>',
+      buttonText: '#พนักงาน <รหัสพนักงาน>',
       color: '#B91C1C',
       altText: 'ยังไม่พบพนักงาน',
     })] });
     return true;
   }
 
-  const leave = await fetchLatestPendingLeaveForEmployee(actor.employee.id);
+  const pendingLeave = await fetchLatestPendingLeaveForEmployee(actor.employee.id);
+  const leave = pendingLeave || await fetchLatestLeaveForEmployee(actor.employee.id);
   if (!leave) {
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
-      title: 'ไม่พบคำขอลาที่รออนุมัติ',
-      message: 'ตอนนี้ไม่มีคำขอลาที่ยังรออนุมัติอยู่ หากต้องการแจ้งลางานใหม่ให้พิมพ์ "แจ้งลางาน"',
-      buttonLabel: 'แจ้งลางาน',
-      buttonText: 'แจ้งลางาน',
+      title: 'ไม่พบคำขอลา',
+      message: 'ตอนนี้ยังไม่มีประวัติคำขอลา หากต้องการขอลางานใหม่ให้พิมพ์ "#ขอลางาน"',
+      buttonLabel: 'ขอลางาน',
+      buttonText: '#ขอลางาน',
       color: '#64748B',
-      altText: 'ไม่พบคำขอลาที่รออนุมัติ',
+      altText: 'ไม่พบคำขอลา',
     })] });
     return true;
   }
 
   const attachmentCount = await countLeaveAttachments(leave.id);
-  const approvers = await findAreaApproversForLeave(leave);
+  if (leave.status !== 'pending') {
+    await replyOrPush({
+      replyToken: event.replyToken,
+      messages: [leaveFlex.leaveResultFlex({
+        id: leave.id,
+        employeeName: leaveEmployeeName(leave),
+        type: leave.leave_type,
+        from: leave.start_date,
+        to: leave.end_date,
+        status: leave.status,
+        approvedBy: getDisplayName({ name: leave.audit_actor_name }, { username: leave.decided_by }, leave.decided_by),
+        attachmentCount,
+      })],
+    });
+    return true;
+  }
+
+  const notified = await notifyLeaveApprovers(leave, { action: 'leave_approval_followed_up_from_status' });
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [leaveFlex.leaveStatusFlex({
-      id: leave.id,
-      employeeName: leaveEmployeeName(leave),
-      branchCode: leaveBranchCode(leave),
-      type: leave.leave_type,
-      from: leave.start_date,
-      to: leave.end_date,
-      reason: leave.reason,
-      status: leave.status,
-      attachmentCount,
-      approverCount: approvers.length,
-    })],
+    messages: [
+      {
+        type: 'text',
+        text: notified.sent > 0
+          ? `ส่งแจ้งเตือนผู้อนุมัติอีกครั้งแล้ว ${notified.sent} คน`
+          : 'ยังไม่พบผู้อนุมัติ area ที่ผูก LINE สำหรับสาขานี้',
+      },
+      leaveFlex.leaveStatusFlex({
+        id: leave.id,
+        employeeName: leaveEmployeeName(leave),
+        branchCode: leaveBranchCode(leave),
+        type: leave.leave_type,
+        from: leave.start_date,
+        to: leave.end_date,
+        reason: leave.reason,
+        status: leave.status,
+        attachmentCount,
+        approverCount: notified.approvers.length,
+      }),
+    ],
   });
   return true;
 }
@@ -289,9 +316,9 @@ async function startLeave(event) {
   if (!stateKey) {
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
       title: 'ไม่พบ LINE user id',
-      message: 'ระบบไม่พบรหัส LINE ของคุณสำหรับการแจ้งลางาน กรุณาลองใหม่ในแชทนี้หรือรีสตาร์ทบอท',
+      message: 'ระบบไม่พบรหัส LINE ของคุณสำหรับการขอลางาน กรุณาลองใหม่ในแชทนี้หรือรีสตาร์ทบอท',
       buttonLabel: 'เริ่มใหม่',
-      buttonText: 'แจ้งลางาน',
+      buttonText: '#ขอลางาน',
       color: '#B91C1C',
       altText: 'ไม่พบ LINE user id',
     })] });
@@ -302,9 +329,9 @@ async function startLeave(event) {
   if (!actor || !actor.type) {
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
       title: 'กรุณาผูก LINE',
-      message: 'หากต้องการแจ้งลางาน กรุณาผูก LINE กับพนักงานด้วยคำสั่ง: พนักงาน <รหัสพนักงาน> หรือใช้บัญชีผู้ใช้งานระบบที่ลงทะเบียนแล้ว',
+      message: 'หากต้องการขอลางาน กรุณาผูก LINE กับพนักงานด้วยคำสั่ง: #พนักงาน <รหัสพนักงาน> หรือใช้บัญชีผู้ใช้งานระบบที่ลงทะเบียนแล้ว',
       buttonLabel: 'วิธีผูก',
-      buttonText: 'พนักงาน <รหัสพนักงาน>',
+      buttonText: '#พนักงาน <รหัสพนักงาน>',
       color: '#EA580C',
       altText: 'กรุณาผูก LINE',
     })] });
@@ -321,7 +348,7 @@ async function startLeave(event) {
       title: missingTarget ? 'ยังไม่พบพนักงานของบัญชีนี้' : 'บัญชียังไม่ผูกพนักงาน',
       message,
       buttonLabel: 'วิธีผูก',
-      buttonText: 'พนักงาน <รหัสพนักงาน>',
+      buttonText: '#พนักงาน <รหัสพนักงาน>',
       color: '#B91C1C',
       altText: 'ยังไม่พบพนักงานของบัญชีนี้',
     })] });
@@ -537,18 +564,21 @@ async function submitLeave(event) {
   setLeaveState(stateKey, null);
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [leaveFlex.leaveStatusFlex({
-      id: leave.id,
-      employeeName: leaveEmployeeName(leave),
-      branchCode: leaveBranchCode(leave),
-      type: leave.leave_type,
-      from: leave.start_date,
-      to: leave.end_date,
-      reason: leave.reason,
-      status: leave.status,
-      attachmentCount: uploaded.length || (state.attachments || []).length,
-      approverCount: notified.approvers.length,
-    })],
+    messages: [
+      { type: 'text', text: 'บันทึกคำขอลาแล้ว ระบบจะส่งแจ้งเตือนผู้อนุมัติอัตโนมัติ' },
+      leaveFlex.leaveStatusFlex({
+        id: leave.id,
+        employeeName: leaveEmployeeName(leave),
+        branchCode: leaveBranchCode(leave),
+        type: leave.leave_type,
+        from: leave.start_date,
+        to: leave.end_date,
+        reason: leave.reason,
+        status: leave.status,
+        attachmentCount: uploaded.length || (state.attachments || []).length,
+        approverCount: notified.approvers.length,
+      }),
+    ],
   });
   return true;
 }
@@ -560,7 +590,7 @@ async function cancelLeave(event) {
     title: 'ยกเลิกคำขอ',
     message: 'ยกเลิกคำขอลาแล้ว',
     buttonLabel: 'เริ่มใหม่',
-    buttonText: 'แจ้งลางาน',
+    buttonText: '#ขอลางาน',
     color: '#6B7280',
     altText: 'ยกเลิกคำขอ',
   })] });
@@ -572,9 +602,9 @@ async function editLeave(event) {
   if (stateKey) setLeaveState(stateKey, null);
   await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
     title: 'พร้อมเริ่มคำขอลาใหม่',
-    message: 'พิมพ์ “แจ้งลางาน” ใหม่ แล้วกรอกข้อมูลหรือส่งเอกสารแนบอีกครั้ง',
+    message: 'พิมพ์ “#ขอลางาน” ใหม่ แล้วกรอกข้อมูลหรือส่งเอกสารแนบอีกครั้ง',
     buttonLabel: 'เริ่มใหม่',
-    buttonText: 'แจ้งลางาน',
+    buttonText: '#ขอลางาน',
     color: '#2563EB',
     altText: 'พร้อมเริ่มคำขอลาใหม่',
   })] });

@@ -130,6 +130,7 @@ function parseDateRange(text) {
 
 function cleanQueryText(text, matchedText) {
   return String(text || '')
+    .replace(/^#\s*/, '')
     .replace(/ตาราง\s*คน\s*ขาด/gi, '')
     .replace(/ตาราง(?:\s*งาน)?/gi, '')
     .replace(/schedule/gi, '')
@@ -140,7 +141,7 @@ function cleanQueryText(text, matchedText) {
 }
 
 function parseScheduleCommand(text) {
-  const raw = String(text || '').trim();
+  const raw = String(text || '').trim().replace(/^#\s*/, '');
   const isMissing = /ตาราง\s*คน\s*ขาด/i.test(raw);
   const range = parseDateRange(raw);
   const query = cleanQueryText(raw, range && range.matchedText);

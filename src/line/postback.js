@@ -8,7 +8,6 @@ const depositFlex = require('./flex/depositFlex');
 const leaveFlex = require('./flex/leaveFlex');
 const { resolveLineActor } = require('./utils/actor');
 const { fetchInspectionById, updateInspectionReview } = require('./flows/inspect/service');
-const { inspectionPendingFlex } = require('./flex/inspectFlex');
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
 const { recordDeposit, saveDepositSlipAttachments } = require('./flows/deposit/service');
 const { getDisplayName } = require('./utils/displayName');
@@ -49,6 +48,79 @@ function getReplyTarget(event) {
   }
 
   throw new Error('No valid reply target available');
+}
+
+function normalizeManagerNote(text) {
+  const note = String(text || '').trim();
+  return note.length > 500 ? `${note.slice(0, 500)}...` : note;
+}
+
+function decodeManagerNote(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  try {
+    return normalizeManagerNote(decodeURIComponent(raw.replace(/\+/g, '%20')));
+  } catch (err) {
+    return normalizeManagerNote(raw);
+  }
+}
+
+function getInspectionPostbackManagerNote(parts, event) {
+  const inlineNote = parts.length > 3 ? parts.slice(3).join('|') : '';
+  const noteFromData = decodeManagerNote(inlineNote);
+  if (noteFromData) return noteFromData;
+
+  const params = event.postback && event.postback.params && typeof event.postback.params === 'object'
+    ? event.postback.params
+    : {};
+  return normalizeManagerNote(params.managerNote || params.manager_note || params.note || '');
+}
+
+function inspectionReviewAckText(action) {
+  return action === 'approve'
+    ? 'บันทึกอนุมัติตรวจร้านแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ'
+    : 'บันทึกไม่อนุมัติตรวจร้านแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ';
+}
+
+async function replyInspectionExistingResult({ replyTarget }) {
+  await replyOrPush({
+    ...replyTarget,
+    messages: [{ type: 'text', text: 'รายการนี้บันทึกผลแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }],
+  });
+}
+
+async function finalizeInspectionReview({ event, inspection, inspectionId, action, managerNote, replyTarget }) {
+  const actor = event.source && event.source.userId ? event.source.userId : null;
+  const reviewer = await resolveReviewActor(event);
+  const status = action === 'approve' ? 'pass' : 'issue';
+  const resolvedManagerNote = managerNote || (action === 'approve' ? 'อนุมัติการตรวจร้าน' : 'ไม่อนุมัติการตรวจร้าน');
+  const reviewTime = formatBangkokTime(event.timestamp);
+  const updated = await updateInspectionReview({
+    inspectionId,
+    status,
+    reviewedBy: getDisplayName(reviewer.name, reviewer.username),
+    reviewTime,
+    managerNote: resolvedManagerNote,
+    actorType: reviewer.actorType,
+    actorId: reviewer.actorId,
+  });
+
+  await logEvent(action === 'approve' ? 'inspection_approved' : 'inspection_marked_problem', {
+    table_name: 'store_inspections',
+    record_id: inspectionId,
+    branch_id: updated.branch_id,
+    actor,
+    actor_name: reviewer.name,
+    reviewed_by: getDisplayName(reviewer.name, reviewer.username),
+    status,
+    manager_note: resolvedManagerNote,
+  });
+
+  await replyOrPush({
+    ...replyTarget,
+    messages: [{ type: 'text', text: inspectionReviewAckText(action) }],
+  });
 }
 
 function formatThaiDateTime(dateValue) {
@@ -144,12 +216,13 @@ async function resolveApprovalActor(event) {
     console.warn('Unable to resolve approval actor:', lineUserId, actorError.message || actorError);
   }
 
-  const confirmedByUsername = await fetchMatchingUsername(employee);
   const displayName = getDisplayName(employee, actor && actor.user, profileName, lineUserId);
+  const displayMatchedName = displayName && displayName !== '-' ? displayName : null;
+  const confirmedByUsername = displayMatchedName || await fetchMatchingUsername(employee);
   return {
     lineUserId,
     displayName,
-    confirmedByUsername: actor && actor.user ? actor.user.username : confirmedByUsername,
+    confirmedByUsername,
     actorType: 'line',
     actorId: lineUserId,
     name: displayName,
@@ -254,7 +327,9 @@ async function handlePostback(event) {
   if (normalizedData.startsWith('inspect_action|')) {
     const parts = normalizedData.split('|');
     const inspectionId = parts[1];
-    const action = String(parts[2] || '').trim().toLowerCase();
+    const rawAction = String(parts[2] || '').trim().toLowerCase();
+    const action = ['reject', 'cancel', 'canceled', 'cancelled', 'issue'].includes(rawAction) ? 'problem' : rawAction;
+    const managerNote = action === 'problem' ? getInspectionPostbackManagerNote(parts, event) : null;
     const replyTarget = getReplyTarget(event);
     const inspection = await fetchInspectionById(inspectionId);
 
@@ -263,57 +338,27 @@ async function handlePostback(event) {
       return true;
     }
 
-    const branchCode = inspection.branches ? inspection.branches.code : inspection.branch_id;
-    const submitterName = getDisplayName(inspection.employees, inspection.line_user_id);
-
     if (inspection.status === 'pass' || inspection.status === 'issue') {
-      await replyOrPush({
-        ...replyTarget,
-        messages: [{ type: 'text', text: 'รายการนี้บันทึกผลแล้ว ระบบจะส่งแจ้งผลในกลุ่มอัตโนมัติ' }],
-      });
+      await replyInspectionExistingResult({ replyTarget });
       return true;
     }
 
     if (action !== 'approve' && action !== 'problem') {
       await replyOrPush({
         ...replyTarget,
-        messages: [inspectionPendingFlex({
-          inspectionId,
-          branchCode,
-          submitterName,
-          photoCount: inspection.photo_count,
-          workDate: inspection.work_date,
-          submitTime: inspection.submit_time,
-        })],
+        messages: [{ type: 'text', text: 'ตรวจร้านใช้หน้ารายละเอียด LIFF สำหรับอนุมัติ กรุณาเปิดจากปุ่ม “ดูรายละเอียด”' }],
       });
       return true;
     }
 
-    const reviewer = await resolveReviewActor(event);
-    const status = action === 'approve' ? 'pass' : 'issue';
-    const managerNote = action === 'approve' ? 'อนุมัติการตรวจร้าน' : 'ตรวจร้านมีปัญหา';
-    const reviewTime = formatBangkokTime(event.timestamp);
-    const updated = await updateInspectionReview({
+    await finalizeInspectionReview({
+      event,
+      inspection,
       inspectionId,
-      status,
-      reviewedBy: getDisplayName(reviewer.name, reviewer.username),
-      reviewTime,
+      action,
       managerNote,
-      actorType: reviewer.actorType,
-      actorId: reviewer.actorId,
+      replyTarget,
     });
-
-    await logEvent(action === 'approve' ? 'inspection_approved' : 'inspection_marked_problem', {
-      table_name: 'store_inspections',
-      record_id: inspectionId,
-      branch_id: updated.branch_id,
-      actor,
-      actor_name: reviewer.name,
-      reviewed_by: getDisplayName(reviewer.name, reviewer.username),
-      status,
-    });
-
-    await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'บันทึกผลตรวจร้านแล้ว ระบบจะส่งแจ้งผลในกลุ่มอัตโนมัติ' }] });
     return true;
   }
 
@@ -421,7 +466,7 @@ async function handlePostback(event) {
 
     if (action === 'edit') {
       setDepositState(actor, null);
-      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'เริ่มฝากเงินใหม่ได้เลยครับ พิมพ์ #ฝากเงิน พร้อมยอดฝากใหม่ แล้วส่งรูปสลิปอีกครั้ง' }] });
+      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'เริ่มฝากเงินใหม่ได้เลยครับ พิมพ์ #ฝากเงิน พร้อมจำนวนเงินใหม่ แล้วส่งรูปสลิปอีกครั้ง' }] });
       return true;
     }
 
@@ -496,6 +541,10 @@ async function handlePostback(event) {
         console.warn('Failed to send manager approval flex for deposit:', err.message || err, { depositId: created && created.id });
       }
     }
+    await replyOrPush({
+      ...replyTarget,
+      messages: [{ type: 'text', text: 'บันทึกฝากเงินแล้ว ระบบจะส่งแจ้งเตือนผู้อนุมัติอัตโนมัติ' }],
+    });
     return true;
   }
 
@@ -511,7 +560,7 @@ async function handlePostback(event) {
     if (pendingState && pendingState.status === DEPOSIT_STATUS.AWAITING_CONFIRMATION && (action === 'send' || action === 'edit')) {
       if (action === 'edit') {
         setDepositState(actor, null);
-        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'เริ่มฝากเงินใหม่ได้เลยครับ พิมพ์ #ฝากเงิน พร้อมยอดฝากใหม่ แล้วส่งรูปสลิปอีกครั้ง' }] });
+        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'เริ่มฝากเงินใหม่ได้เลยครับ พิมพ์ #ฝากเงิน พร้อมจำนวนเงินใหม่ แล้วส่งรูปสลิปอีกครั้ง' }] });
         return true;
       }
 
@@ -574,6 +623,10 @@ async function handlePostback(event) {
           console.warn('Failed to send manager approval flex for deposit:', err.message || err, { depositId: created && created.id });
         }
       }
+      await replyOrPush({
+        ...replyTarget,
+        messages: [{ type: 'text', text: 'บันทึกฝากเงินแล้ว ระบบจะส่งแจ้งเตือนผู้อนุมัติอัตโนมัติ' }],
+      });
       return true;
     }
 
@@ -627,7 +680,7 @@ async function handlePostback(event) {
       await logEvent('deposit_verified_by_manager', { deposit_id: depositId, actor, verified_by: actorName, confirmed_by: actorInfo.confirmedByUsername || null });
       await replyOrPush({
         ...replyTarget,
-        messages: [{ type: 'text', text: 'บันทึกอนุมัติยอดฝากแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }],
+        messages: [{ type: 'text', text: 'บันทึกอนุมัติฝากเงินแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }],
       });
       return true;
     }
@@ -654,7 +707,7 @@ async function handlePostback(event) {
       await logEvent('deposit_rejected_by_manager', { deposit_id: depositId, actor, rejected_by: actorName, confirmed_by: actorInfo.confirmedByUsername || null });
       await replyOrPush({
         ...replyTarget,
-        messages: [{ type: 'text', text: `รายการฝากเงิน #${updated.id} ถูกตีกลับแล้ว` }],
+        messages: [{ type: 'text', text: 'บันทึกไม่อนุมัติฝากเงินแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }],
       });
       return true;
     }
@@ -718,6 +771,10 @@ async function handlePostback(event) {
         approved_by: actorName,
         confirmed_by: actorInfo.confirmedByUsername || null,
       });
+      await replyOrPush({
+        ...replyTarget,
+        messages: [{ type: 'text', text: 'บันทึกอนุมัติยอดขายแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }],
+      });
       return true;
     }
 
@@ -735,7 +792,10 @@ async function handlePostback(event) {
         rejected_by: actorName,
         confirmed_by: actorInfo.confirmedByUsername || null,
       });
-      await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: `รายการยอดขาย #${saleId} ถูกตีกลับแล้ว` }] });
+      await replyOrPush({
+        ...replyTarget,
+        messages: [{ type: 'text', text: 'บันทึกไม่อนุมัติยอดขายแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }],
+      });
       return true;
     }
 
@@ -749,4 +809,6 @@ async function handlePostback(event) {
   return null;
 }
 
-module.exports = { handlePostback };
+module.exports = {
+  handlePostback,
+};

@@ -4,27 +4,23 @@ const warningFlex = require('../flex/warningFlex');
 const payrollFlex = require('../flex/payrollFlex');
 const alertFlex = require('../flex/alertFlex');
 const leaveFlex = require('../flex/leaveFlex');
-const { approvedSalesResultFlex } = require('../flex/salesFlex');
+const { approvedSalesResultFlex, rejectedFlex: rejectedSalesResultFlex } = require('../flex/salesFlex');
 const depositFlex = require('../flex/depositFlex');
 const { inspectionPendingFlex, inspectionResultFlex } = require('../flex/inspectFlex');
 const { COLORS, row: uiRow, card, bubble, primaryButton } = require('../flex/uiFlex');
 const { getDisplayName } = require('../utils/displayName');
+const { normalizeLiffBaseUrl, appendQueryToLiffUrl } = require('../utils/liff');
 const userRepo = require('../../../backend/repositories/user.repo');
 
 let running = false;
 const sentShiftReminderKeys = new Set();
 const BANGKOK_TIME_ZONE = 'Asia/Bangkok';
 const TH_GREGORY_LOCALE = 'th-TH-u-ca-gregory-nu-latn';
-const DEFAULT_INSPECTION_LIFF_URL = 'https://liff.line.me/2010334830-E2aZbMzY';
 const OPEN_REMINDER_MINUTES_BEFORE = 15;
 const CLOSE_REMINDER_MINUTES_BEFORE = 5;
 
 function inspectionLiffBaseUrl() {
-  const raw = String(process.env.LIFF_INSPECTION_URL || DEFAULT_INSPECTION_LIFF_URL).trim().replace(/\/+$/, '');
-  if (/^\d+-[A-Za-z0-9_-]+$/.test(raw)) return `https://liff.line.me/${raw}`;
-  if (/^liff\.line\.me\//i.test(raw)) return `https://${raw}`;
-  if (/^https?:\/\//i.test(raw)) return raw;
-  return DEFAULT_INSPECTION_LIFF_URL;
+  return normalizeLiffBaseUrl(process.env.LIFF_INSPECTION_URL);
 }
 
 function buildInspectionDetailUrl(inspection) {
@@ -41,7 +37,7 @@ function buildInspectionDetailUrl(inspection) {
   if (inspection.submitted_by) query.set('employeeId', String(inspection.submitted_by));
   if (inspection.line_user_id) query.set('lineUserId', String(inspection.line_user_id));
   if (inspection.branches && inspection.branches.code) query.set('branchCode', String(inspection.branches.code));
-  return `${path}?${query.toString()}`;
+  return appendQueryToLiffUrl(path, query);
 }
 
 function isLineUriActionSafe(uri) {
@@ -54,6 +50,20 @@ function filterLineSafeAttachments(attachments = []) {
     const uri = attachment && (attachment.file_url || attachment.url || attachment.uri);
     return isLineUriActionSafe(uri);
   });
+}
+
+function isLiffInspection(inspection = {}, items = {}) {
+  const source = String(
+    items.inspection_source ||
+    items.inspectionSource ||
+    items.source ||
+    items.submission_source ||
+    items.submissionSource ||
+    inspection.source ||
+    ''
+  ).trim().toLowerCase();
+
+  return source === 'liff' || source.includes('liff');
 }
 
 function bangkokDateParts(date = new Date()) {
@@ -184,6 +194,16 @@ function getLineErrorDetail(error) {
     response: responseData || null,
     details: error && error.details || null,
   };
+}
+
+function isMissingColumnError(error, columnName) {
+  if (!error) return false;
+  const message = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`;
+  const mentionsColumn = columnName ? new RegExp(`\\b${columnName}\\b`, 'i').test(message) : true;
+  return mentionsColumn && (
+    error.code === 'PGRST204' ||
+    /column|schema cache/i.test(message)
+  );
 }
 
 async function countAttachments(entityType, entityId) {
@@ -437,8 +457,8 @@ function formatThaiDateTime(value) {
 async function notifySalesResults() {
   let { data, error } = await supabase
     .from('sales')
-    .select('id,sell_date,confirmed_at,confirmed_by,cash_amount,credit_amount,transfer_amount,total_amount,line_group_id,line_notified,branches(code,name)')
-.eq('status', 'confirmed')
+    .select('id,sell_date,status,confirmed_at,confirmed_by,cash_amount,credit_amount,transfer_amount,total_amount,line_group_id,line_notified,branches(code,name)')
+    .in('status', ['confirmed', 'rejected'])
     .not('line_group_id', 'is', null)
     .or('line_notified.eq.false,line_notified.is.null')
     .order('confirmed_at', { ascending: true });
@@ -458,15 +478,22 @@ async function notifySalesResults() {
     const approvedAt = formatThaiDateTime(sale.confirmed_at);
     const attachmentCount = await countAttachments('sale', sale.id);
 
-    const message = approvedSalesResultFlex({
-      saleId: sale.id,
-      branchCode,
-      saleDate,
-      total: sale.total_amount || 0,
-      approvedBy,
-      approvedAt,
-      attachmentCount,
-    });
+    const message = sale.status === 'rejected'
+      ? rejectedSalesResultFlex({
+        saleId: sale.id,
+        branchCode,
+        rejectedBy: approvedBy,
+        rejectedAt: approvedAt,
+      })
+      : approvedSalesResultFlex({
+        saleId: sale.id,
+        branchCode,
+        saleDate,
+        total: sale.total_amount || 0,
+        approvedBy,
+        approvedAt,
+        attachmentCount,
+      });
 
     try {
       await push(groupId, message);
@@ -475,7 +502,7 @@ async function notifySalesResults() {
         .update({ line_notified: true, updated_at: new Date().toISOString() })
         .eq('id', sale.id);
     } catch (sendError) {
-      console.warn('Sales approval notification failed:', sendError.message || sendError, { sale_id: sale.id, groupId });
+      console.warn('Sales result notification failed:', sendError.message || sendError, { sale_id: sale.id, status: sale.status, groupId });
     }
   }
 }
@@ -498,7 +525,7 @@ async function notifyCashDepositResults() {
       bank_accounts(bank_name,bank_short,account_name,account_no),
       employees(name,nickname)
     `)
-    .eq('status', 'verified')
+    .in('status', ['verified', 'rejected'])
     .not('line_group_id', 'is', null)
     .or('line_notified.eq.false,line_notified.is.null')
     .order('verified_at', { ascending: true });
@@ -519,15 +546,22 @@ async function notifyCashDepositResults() {
     const attachmentCount = await countAttachments('cash_deposit', deposit.id);
     const slipCount = attachmentCount || (deposit.slip_url ? 1 : 0);
 
-    const message = depositFlex.depositApprovedResultFlex({
-      id: deposit.id,
-      branchCode,
-      depositDate,
-      depositedAmount: deposit.deposited_amount,
-      slipCount,
-      verifiedBy,
-      verifiedAt,
-    });
+    const message = deposit.status === 'rejected'
+      ? depositFlex.depositRejectedFlex({
+        depositId: deposit.id,
+        branchCode,
+        rejectedBy: verifiedBy,
+        rejectedAt: verifiedAt,
+      })
+      : depositFlex.depositApprovedResultFlex({
+        id: deposit.id,
+        branchCode,
+        depositDate,
+        depositedAmount: deposit.deposited_amount,
+        slipCount,
+        verifiedBy,
+        verifiedAt,
+      });
 
     try {
       await push(groupId, message);
@@ -536,15 +570,28 @@ async function notifyCashDepositResults() {
         .update({ line_notified: true, updated_at: new Date().toISOString() })
         .eq('id', deposit.id);
     } catch (sendError) {
-      console.warn('Cash deposit approval notification failed:', sendError.message || sendError, { deposit_id: deposit.id, groupId });
+      console.warn('Cash deposit result notification failed:', sendError.message || sendError, { deposit_id: deposit.id, status: deposit.status, groupId });
     }
   }
 }
 
 async function notifyPendingLiffInspections() {
-  const { data, error } = await supabase
-    .from('store_inspections')
-    .select(`
+  const inspectionSelect = `
+      id,
+      branch_id,
+      submitted_by,
+      work_date,
+      submit_time,
+      status,
+      source,
+      inspection_items,
+      photo_count,
+      line_group_id,
+      line_user_id,
+      branches(code,name),
+      employees(name,nickname,line_user_id)
+    `;
+  const fallbackInspectionSelect = `
       id,
       branch_id,
       submitted_by,
@@ -557,10 +604,25 @@ async function notifyPendingLiffInspections() {
       line_user_id,
       branches(code,name),
       employees(name,nickname,line_user_id)
-    `)
+    `;
+
+  let { data, error } = await supabase
+    .from('store_inspections')
+    .select(inspectionSelect)
     .eq('status', 'pending')
     .order('updated_at', { ascending: true })
     .limit(20);
+
+  if (error && isMissingColumnError(error, 'source')) {
+    const retry = await supabase
+      .from('store_inspections')
+      .select(fallbackInspectionSelect)
+      .eq('status', 'pending')
+      .order('updated_at', { ascending: true })
+      .limit(20);
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     console.warn('Pending LIFF inspection notification query failed:', error.message || error);
@@ -571,7 +633,7 @@ async function notifyPendingLiffInspections() {
     const items = inspection.inspection_items && typeof inspection.inspection_items === 'object'
       ? inspection.inspection_items
       : {};
-    if (!items.inspected_shop || items.inspection_source !== 'liff' || items.approval_flex_sent_at) continue;
+    if (!items.inspected_shop || !isLiffInspection(inspection, items) || items.approval_flex_sent_at) continue;
 
     const { data: attachments, error: attachmentError } = await supabase
       .from('attachments')
@@ -603,7 +665,6 @@ async function notifyPendingLiffInspections() {
       workDate: inspection.work_date,
       submitTime: inspection.submit_time,
       detailUri: buildInspectionDetailUrl(inspection),
-      showActions: false,
     });
 
     const targets = new Map();
@@ -830,7 +891,7 @@ async function sendShiftReminders(date = new Date()) {
           branchCode: shift.branchCode,
           branchName: shift.branchName,
           time: timeLabel(shift.shiftStart, '09:00:00'),
-          commandText: `เปิดร้าน ${shift.branchCode || ''}`.trim(),
+          commandText: `#เปิดร้าน ${shift.branchCode || ''}`.trim(),
         }));
         rememberShiftReminder(openKey, date);
       } catch (sendError) {
@@ -852,7 +913,7 @@ async function sendShiftReminders(date = new Date()) {
           branchCode: shift.branchCode,
           branchName: shift.branchName,
           time: timeLabel(shift.shiftEnd, '20:00:00'),
-          commandText: `ปิดร้าน ${shift.branchCode || ''}`.trim(),
+          commandText: `#ปิดร้าน ${shift.branchCode || ''}`.trim(),
         }));
         rememberShiftReminder(closeKey, date);
       } catch (sendError) {

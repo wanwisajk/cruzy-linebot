@@ -5,7 +5,7 @@ const { logEvent } = require('../../utils/audit');
 
 async function handleBranchLink(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
-  const match = text.match(/^สาขา\s+([A-Za-z][A-Za-z0-9_-]{1,15})$/i);
+  const match = text.match(/^#\s*สาขา\s+([A-Za-z][A-Za-z0-9_-]{1,15})$/i);
   const groupId = event.source && event.source.groupId;
 
   if (!groupId) {
@@ -14,7 +14,7 @@ async function handleBranchLink(event) {
   }
 
   if (!match) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: สาขา <ตัวย่อสาขา> เช่น สาขา CCA' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: #สาขา <ตัวย่อสาขา> เช่น #สาขา CCA' }] });
     return;
   }
 
@@ -35,7 +35,7 @@ async function handleBranchLink(event) {
 
 async function handleAdminLink(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
-  const match = text.trim().match(/^แอดมิน\s+(\S{1,255})$/i);
+  const match = text.trim().match(/^#\s*แอดมิน\s+(\S{1,255})$/i);
   const lineUserId = event.source && event.source.userId;
 
   if (!lineUserId) {
@@ -44,7 +44,7 @@ async function handleAdminLink(event) {
   }
 
   if (!match) {
-    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: แอดมิน <user id> เช่น แอดมิน admin001' }] });
+    await replyOrPush({ replyToken: event.replyToken, messages: [{ type: 'text', text: 'ใช้รูปแบบ: #แอดมิน <user id> เช่น #แอดมิน admin001' }] });
     return;
   }
 

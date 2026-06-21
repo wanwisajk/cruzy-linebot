@@ -1,47 +1,72 @@
 const { COLORS, row: infoRow, card, bubble: baseBubble, resultFlex, primaryButton } = require('./uiFlex');
 
-function inspectionSummaryFlex({ branchCode, submitterName, photoCount, workDate, submitTime }) {
-  return baseBubble({
-    title: 'สรุปตรวจร้าน',
-    subtitle: 'ตรวจข้อมูลก่อนส่งให้ผู้จัดการอนุมัติ',
-    color: '#0F766E',
-    altText: `สรุปตรวจร้าน ${branchCode || ''}`,
-    body: [
-      card([
-        infoRow('สาขา', branchCode || 'ไม่ระบุสาขา'),
-        infoRow('ผู้ตรวจ', submitterName || 'ไม่ระบุ'),
-        infoRow('วันที่', workDate || '-'),
-        infoRow('เวลา', submitTime ? String(submitTime).slice(0, 5) : '-'),
-      ], { backgroundColor: '#FFFFFF' }),
+function statusPill(text, color, backgroundColor) {
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    backgroundColor,
+    paddingAll: 'sm',
+    cornerRadius: 'md',
+    contents: [
+      { type: 'text', text, color, weight: 'bold', size: 'sm', align: 'center', wrap: true },
     ],
-    footer: {
-      type: 'box',
-      layout: 'vertical',
-      spacing: 'sm',
-      contents: [
-        {
-          type: 'button',
-          style: 'primary',
-          color: '#16A34A',
-          action: { type: 'message', label: 'ยืนยันส่ง', text: 'ยืนยันส่ง' },
-        },
-      ],
-    },
-  });
+  };
+}
+
+function notePanel(text, options = {}) {
+  return {
+    type: 'box',
+    layout: 'vertical',
+    backgroundColor: options.backgroundColor || '#EFF6FF',
+    cornerRadius: 'xl',
+    paddingAll: 'md',
+    margin: options.margin || 'md',
+    contents: [
+      {
+        type: 'text',
+        text,
+        size: options.size || 'xs',
+        color: options.color || COLORS.info,
+        weight: options.weight,
+        wrap: true,
+      },
+    ],
+  };
+}
+
+function metricPanel(label, value, color = COLORS.teal) {
+  return {
+    type: 'box',
+    layout: 'vertical',
+    backgroundColor: '#F0FDF4',
+    cornerRadius: 'xl',
+    paddingAll: 'lg',
+    margin: 'md',
+    contents: [
+      { type: 'text', text: label, color: COLORS.success, size: 'xs', weight: 'bold', wrap: true },
+      { type: 'text', text: String(value || '-'), align: 'end', weight: 'bold', size: 'xl', color, margin: 'xs', wrap: true },
+    ],
+  };
 }
 
 function inspectionLiffEntryFlex({ branchCode, submitterName, workDate, uri }) {
   return baseBubble({
-    title: 'ตรวจร้าน',
-    subtitle: 'กดดำเนินการต่อเพื่อเปิดหน้าตรวจร้าน',
+    title: '🔍 เปิดหน้าตรวจร้าน',
+    subtitle: branchCode ? `สาขา ${branchCode}` : 'เปิดแบบฟอร์มตรวจร้าน',
     color: '#0F766E',
     altText: `เปิดหน้าตรวจร้าน ${branchCode || ''}`,
     body: [
+      statusPill('📝 กรอกข้อมูลใน LIFF', '#0F766E', '#CCFBF1'),
       card([
         infoRow('สาขา', branchCode || 'ไม่ระบุสาขา'),
         infoRow('ผู้ตรวจ', submitterName || 'ไม่ระบุ'),
         infoRow('วันที่', workDate || '-'),
-      ], { backgroundColor: '#FFFFFF' }),
+      ], { backgroundColor: '#FFFFFF', margin: 'xs' }),
+      metricPanel('ขั้นตอนถัดไป', 'เปิดแบบฟอร์มและอัปโหลดรูป'),
+      notePanel('กรอกรายการตรวจ รูปภาพ และหมายเหตุทั้งหมดในหน้าเดียว หลังส่งแล้วระบบจะแจ้งผู้อนุมัติอัตโนมัติ', {
+        backgroundColor: '#F8FAFC',
+        color: COLORS.muted,
+      }),
     ],
     footer: {
       type: 'box',
@@ -52,7 +77,7 @@ function inspectionLiffEntryFlex({ branchCode, submitterName, workDate, uri }) {
           type: 'button',
           style: 'primary',
           color: '#16A34A',
-          action: { type: 'uri', label: 'ดำเนินการต่อ', uri },
+          action: { type: 'uri', label: 'เปิดหน้าตรวจร้าน', uri },
         },
       ],
     },
@@ -112,39 +137,16 @@ function inspectionPendingFlex({
   workDate,
   submitTime,
   detailUri,
-  showActions = true,
 }) {
   const safeDetailUri = isLineUriActionSafe(detailUri) ? String(detailUri).trim() : null;
   const attachmentItems = normalizeAttachmentItems({ attachments, attachmentUrls });
-  const imageButtons = attachmentItems.slice(0, 3).map((item) => ({
-    type: 'button',
-    style: 'secondary',
-    height: 'sm',
-    action: {
-      type: 'uri',
-      label: item.label,
-      uri: item.uri,
-    },
-  }));
-  const statusBadge = {
-    type: 'box',
-    layout: 'horizontal',
-    backgroundColor: '#FFFBEB',
-    paddingAll: 'sm',
-    cornerRadius: 'md',
-    margin: 'md',
-    contents: [
-      { type: 'text', text: 'รออนุมัติ', color: COLORS.warning, weight: 'bold', size: 'sm', align: 'center' },
-    ],
-  };
-
   return baseBubble({
     title: '⏳ ตรวจร้านรออนุมัติ',
-    subtitle: `รายการ #${inspectionId}`,
-    color: '#0F172A',
+    subtitle: branchCode ? `สาขา ${branchCode} · รายการ #${inspectionId}` : `รายการ #${inspectionId}`,
+    color: '#0F766E',
     altText: `ตรวจร้าน #${inspectionId} รออนุมัติ`,
     body: [
-      statusBadge,
+      statusPill('👀 รอผู้จัดการตรวจสอบ', COLORS.warning, '#FFFBEB'),
       card([
         infoRow('สาขา', branchCode || 'ไม่ระบุสาขา'),
         infoRow('ผู้ตรวจ', submitterName || 'ไม่ระบุ'),
@@ -152,57 +154,32 @@ function inspectionPendingFlex({
         infoRow('เวลา', submitTime ? String(submitTime).slice(0, 5) : '-'),
         infoRow('รูปแนบ', `${photoCount || 0} รูป`, '#1D4ED8'),
       ], { backgroundColor: COLORS.white, margin: 'xs' }),
-      {
-        type: 'box',
-        layout: 'vertical',
+      notePanel('เปิดรายละเอียดเพื่อดูรูปและเช็กลิสต์ จากนั้นอนุมัติหรือไม่อนุมัติในหน้า LIFF พร้อมหมายเหตุ', {
         backgroundColor: '#EFF6FF',
-        cornerRadius: 'xl',
-        paddingAll: 'md',
-        margin: 'md',
-        contents: [
-          {
-            type: 'text',
-            text: 'เปิดรายละเอียดเพื่อตรวจรูปตามหัวข้อ แล้วอนุมัติหรือแจ้งปัญหาในหน้า LIFF',
-            size: 'xs',
-            color: COLORS.info,
-            wrap: true,
-          },
-        ],
-      },
+        color: COLORS.info,
+      }),
     ],
-      footer: {
-        type: 'box',
-        layout: 'vertical',
-        spacing: 'md',
-        backgroundColor: COLORS.white,
-        contents: [
-          safeDetailUri ? primaryButton('ดูรายละเอียด', { type: 'uri', uri: safeDetailUri }, COLORS.info) : null,
-          {
-            type: 'box',
-            layout: 'vertical',
-            spacing: 'sm',
-            contents: imageButtons.length ? imageButtons : [
-              { type: 'text', text: 'ไม่มีรูปแนบ', size: 'xs', color: '#64748B', wrap: true },
-            ],
-          },
-        attachmentItems.length > 3 ? {
+    footer: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      backgroundColor: COLORS.white,
+      contents: [
+        safeDetailUri ? primaryButton('ดูรายละเอียด', { type: 'uri', uri: safeDetailUri }, COLORS.info) : null,
+        {
+          type: 'text',
+          text: safeDetailUri ? 'ดูรูป เช็กลิสต์ หมายเหตุ และบันทึกผลใน LIFF' : 'ไม่มีลิงก์รายละเอียด',
+          size: 'xs',
+          color: '#64748B',
+          wrap: true,
+        },
+        attachmentItems.length > 0 ? {
           type: 'text',
           text: `มีรูปแนบทั้งหมด ${attachmentItems.length} รูป`,
           size: 'xs',
           color: '#64748B',
           wrap: true,
           margin: 'xs',
-        } : null,
-        showActions ? {
-          type: 'button',
-          style: 'primary',
-          color: '#16A34A',
-          action: { type: 'postback', label: 'อนุมัติ', data: `inspect_action|${inspectionId}|approve` },
-        } : null,
-        showActions ? {
-          type: 'button',
-          style: 'secondary',
-          action: { type: 'postback', label: 'มีปัญหา', data: `inspect_action|${inspectionId}|problem` },
         } : null,
       ].filter(Boolean),
     },
@@ -212,16 +189,16 @@ function inspectionPendingFlex({
 function inspectionResultFlex({ inspectionId, branchCode, status, photoCount = 0, reviewedBy, reviewTime, managerNote }) {
   const ok = status === 'pass';
   return resultFlex({
-    title: ok ? '✅ ตรวจร้านผ่านแล้ว' : '⚠️ ตรวจร้านพบปัญหา',
-    subtitle: `รายการ #${inspectionId}`,
-    statusLabel: ok ? 'อนุมัติ' : 'มีปัญหา',
-    statusColor: ok ? COLORS.success : COLORS.danger,
-    altText: ok ? '✅ ตรวจร้านผ่านแล้ว' : '⚠️ ตรวจร้านพบปัญหา',
+    title: ok ? '✅ ตรวจร้านผ่านแล้ว' : '⚠️ ตรวจร้านไม่อนุมัติ',
+    subtitle: branchCode ? `สาขา ${branchCode} · รายการ #${inspectionId}` : `รายการ #${inspectionId}`,
+    statusLabel: ok ? 'อนุมัติ' : 'ไม่อนุมัติ',
+    statusColor: ok ? COLORS.teal : COLORS.danger,
+    altText: ok ? 'ตรวจร้านผ่านแล้ว' : 'ตรวจร้านไม่อนุมัติ',
     rows: [
       infoRow('สาขา', branchCode || '-'),
       infoRow('รูปแนบ', `${Number(photoCount || 0)} รูป`, COLORS.info),
-      infoRow(ok ? 'ผู้อนุมัติ' : 'ผู้ตรวจ', reviewedBy || 'ผู้จัดการ'),
-      infoRow('เวลาอนุมัติ', reviewTime ? `${String(reviewTime).slice(0, 5)} น.` : '-'),
+      infoRow(ok ? 'ผู้อนุมัติ' : 'ผู้แจ้งปัญหา', reviewedBy || 'ผู้จัดการ'),
+      infoRow(ok ? 'เวลาอนุมัติ' : 'เวลาแจ้งปัญหา', reviewTime ? `${String(reviewTime).slice(0, 5)} น.` : '-'),
       ok ? null : infoRow('หมายเหตุ', managerNote || 'พบปัญหา'),
     ].filter(Boolean),
   });
@@ -229,7 +206,6 @@ function inspectionResultFlex({ inspectionId, branchCode, status, photoCount = 0
 
 module.exports = {
   inspectionLiffEntryFlex,
-  inspectionSummaryFlex,
   inspectionPendingFlex,
   inspectionResultFlex,
 };

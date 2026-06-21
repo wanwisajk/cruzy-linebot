@@ -233,7 +233,7 @@ async function handle(event) {
       replyToken: event.replyToken,
       messages: [scheduleFlex.emptyFlex({
         title: 'ยังไม่รู้ว่าจะดูตารางของใคร',
-        message: 'พิมพ์เช่น ตาราง CCA, ตาราง สมชาย, ตาราง CCA 1/6-7/6 หรือผูก LINE ด้วยคำสั่ง พนักงาน <รหัสพนักงาน>',
+        message: 'พิมพ์เช่น #ตาราง CCA, #ตาราง สมชาย, #ตาราง CCA 1/6-7/6 หรือผูก LINE ด้วยคำสั่ง #พนักงาน <รหัสพนักงาน>',
       })],
     });
   }

@@ -224,7 +224,7 @@ function leaveStatusFlex({ id, employeeName, branchCode, type, from, to, reason,
       type: 'box',
       layout: 'vertical',
       contents: [
-        primaryButton('ติดตาม', { type: 'postback', data: `leave_follow|${id}` }, THEME_COLORS.PRIMARY),
+        primaryButton('ติดตามสถานะ', { type: 'postback', data: `leave_follow|${id}`, displayText: '#ติดตามสถานะ' }, THEME_COLORS.PRIMARY),
       ],
     } : undefined,
   });

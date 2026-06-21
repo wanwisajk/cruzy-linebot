@@ -91,19 +91,19 @@ function depositConfirmFlex({
   const pendingColor = pendingCashColor(pendingCashBalance);
 
   return bubble({
-    title: '📊 สรุปยอดฝาก',
+    title: '📊 สรุปฝากเงิน',
     subtitle: branchCode ? `สาขา ${String(branchCode)}` : `รายการแบบร่าง #${tempId}`,
     color: COLORS.teal,
-    altText: `สรุปยอดฝาก สาขา ${branchCode || tempId}`,
+    altText: `สรุปฝากเงิน สาขา ${branchCode || tempId}`,
     body: [
       card([
-        submitterName ? depositInfoRow('ผู้ส่งยอดฝาก', submitterName) : null,
+        submitterName ? depositInfoRow('ผู้ส่งฝากเงิน', submitterName) : null,
         coveredDate ? depositInfoRow('วันที่ยอดขาย', coveredDate) : null,
         depositDate ? depositInfoRow('วันที่ฝากจริง', depositDate) : null,
         depositInfoRow('บัญชีปลายทาง', bank || 'ไม่ระบุ'),
         typeof slipCount === 'number' ? depositInfoRow('รูปหลักฐาน', `${slipCount} รูป`, COLORS.info) : null,
         depositAmountRow('ยอดขายเงินสด', expectedAmount != null ? expectedAmount : amount),
-        depositAmountRow('ยอดฝากจริง', amount, COLORS.success),
+        depositAmountRow('ฝากเงินจริง', amount, COLORS.success),
         depositAmountRow('เศษคงค้างรายการนี้', varianceAmount || 0, varianceColor(varianceAmount)),
       ].filter(Boolean)),
       typeof pendingCashBalance === 'number' ? {
@@ -163,14 +163,14 @@ function depositConfirmFlex({
 
 function managerApprovalFlex({ depositId }) {
   return bubble({
-    title: `⏳ ยอดฝากรออนุมัติ`,
+    title: `⏳ ฝากเงินรออนุมัติ`,
     subtitle: `รายการ #${depositId}`,
     color: COLORS.ink,
-    altText: `ยอดฝาก #${depositId} รออนุมัติ`,
+    altText: `ฝากเงิน #${depositId} รออนุมัติ`,
     body: [
       {
         type: 'text',
-        text: 'ตรวจสอบยอดฝาก แล้วกดเลือกดำเนินการ:',
+        text: 'ตรวจสอบฝากเงิน แล้วกดเลือกดำเนินการ:',
         size: 'sm',
         color: COLORS.ink,
         wrap: true,
@@ -190,10 +190,10 @@ function managerApprovalFlex({ depositId }) {
            
 function depositSuccessFlex({ depositId, branchCode, bank, amount, slipCount }) {
   return bubble({
-    title: '🎉 บันทึกยอดฝากสำเร็จ',
+    title: '🎉 บันทึกฝากเงินสำเร็จ',
     subtitle: `รหัสเอกสาร #${depositId || '-'}`,
     color: COLORS.teal,
-    altText: 'บันทึกยอดฝากสำเร็จ',
+    altText: 'บันทึกฝากเงินสำเร็จ',
     body: [
       card([
         depositInfoRow('สาขา', String(branchCode || 'ไม่ระบุสาขา')),
@@ -228,11 +228,11 @@ function depositSuccessFlex({ depositId, branchCode, bank, amount, slipCount }) 
 
 function depositApprovedResultFlex({ id, branchCode, depositDate, depositedAmount, verifiedBy, verifiedAt, slipCount = 0 }) {
   return resultFlex({
-    title: '✅ ยอดฝากได้รับการอนุมัติ',
+    title: '✅ ฝากเงินได้รับการอนุมัติ',
     subtitle: `สาขา ${branchCode}`,
     statusLabel: 'อนุมัติแล้ว',
     statusColor: COLORS.success,
-    altText: 'อนุมัติยอดฝากเรียบร้อย',
+    altText: 'อนุมัติฝากเงินเรียบร้อย',
     rows: [
       uiRow('วันที่', depositDate || '-'),
       uiRow('ยอดรวมฝาก', `${Number(depositedAmount || 0).toLocaleString()} บาท`, COLORS.success),
@@ -245,7 +245,7 @@ function depositApprovedResultFlex({ id, branchCode, depositDate, depositedAmoun
 
 function depositNoticeFlex({ title, subtitle, message, buttonLabel, buttonText, color = COLORS.ink, altText, quickReply }) {
   const payload = bubble({
-    title: title || '📢 แจ้งเตือนยอดฝาก',
+    title: title || '📢 แจ้งเตือนฝากเงิน',
     subtitle,
     color,
     altText: altText || title || 'Deposit notification',

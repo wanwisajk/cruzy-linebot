@@ -182,6 +182,22 @@ async function fetchLatestPendingLeaveForEmployee(employeeId) {
   return data;
 }
 
+async function fetchLatestLeaveForEmployee(employeeId) {
+  if (!employeeId) return null;
+
+  const { data, error } = await supabase
+    .from('leaves')
+    .select(LEAVE_SELECT)
+    .eq('employee_id', employeeId)
+    .order('submitted_at', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
 async function countLeaveAttachments(leaveId) {
   if (!leaveId) return 0;
 
@@ -235,6 +251,7 @@ module.exports = {
   uploadLeaveAttachment,
   fetchLeaveById,
   fetchLatestPendingLeaveForEmployee,
+  fetchLatestLeaveForEmployee,
   countLeaveAttachments,
   findAreaApproversForLeave,
 };
