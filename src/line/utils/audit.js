@@ -26,6 +26,8 @@ async function logEvent(eventType, payload) {
 }
 
 async function logInboundLineEvent(event) {
+  if (!shouldAuditInboundLineEvent(event)) return false;
+
   const source = event.source || {};
   const lineUserId = source.userId || null;
   const text = event.message && event.message.type === 'text'
@@ -73,6 +75,17 @@ async function logInboundLineEvent(event) {
   } catch (err) {
     console.warn('Inbound LINE audit insert failed', err.message || err, payload);
   }
+
+  return true;
+}
+
+function shouldAuditInboundLineEvent(event = {}) {
+  if (event.type === 'postback') return true;
+
+  const message = event.message || {};
+  if (message.type !== 'text') return false;
+
+  return String(message.text || '').trim().startsWith('#');
 }
 
 async function safeResolveBranch(event, text) {
