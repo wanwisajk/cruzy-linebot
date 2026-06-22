@@ -219,7 +219,7 @@ async function handle(event) {
     return handleMissingSchedule(event, actor, parsed);
   }
 
-  if (isPrivateEvent(event) && actor && actor.employee && (!actor.user || !query)) {
+  if (isPrivateEvent(event) && actor && actor.employee && !actor.user) {
     return handlePrivateEmployeeSchedule(event, actor, parsed);
   }
 

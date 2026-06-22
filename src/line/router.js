@@ -72,6 +72,35 @@ function isCommandListCommand(text) {
   return /^#\s*(?:คำสั่ง|help)(?:\s|$)/i.test(String(text || '').trim());
 }
 
+function isBranchLinkCommand(text) {
+  return /^#\s*สาขา\s+[A-Za-z][A-Za-z0-9_-]{1,15}$/i.test(String(text || '').trim());
+}
+
+function isAdminLinkCommand(text) {
+  return /^#\s*แอดมิน\s+\S{1,255}$/i.test(String(text || '').trim());
+}
+
+function isRegisterCommand(text) {
+  return /^#\s*(?:พนักงาน|register)\s+\S{1,255}$/i.test(String(text || '').trim());
+}
+
+function isPrivateOnlyCommand(text) {
+  return isAdminLinkCommand(text) ||
+    isRegisterCommand(text) ||
+    isPayrollCommand(text) ||
+    isWarningCommand(text) ||
+    isAttendanceAlertCommand(text) ||
+    isLeaveStatusCommand(text) ||
+    isLeaveStartCommand(text);
+}
+
+async function replyPrivateOnlyCommand(event) {
+  return replyOrPush({
+    replyToken: event.replyToken,
+    messages: [{ type: 'text', text: 'คำสั่งนี้ใช้ได้เฉพาะในแชทส่วนตัวกับบอทเท่านั้นครับ' }],
+  });
+}
+
 async function handleEvent(event) {
   try {
     console.log('📨 Event received:', {
@@ -129,17 +158,21 @@ async function handleEvent(event) {
       return replyOrPush({ replyToken: event.replyToken, messages: [commandFlex()] });
     }
 
-    if (/^#\s*สาขา\s+[A-Za-z][A-Za-z0-9_-]{1,15}$/i.test(text.trim())) {
+    if (!isPrivateEvent(event) && isPrivateOnlyCommand(text)) {
+      return replyPrivateOnlyCommand(event);
+    }
+
+    if (isBranchLinkCommand(text)) {
       console.log('🔗 Routing to branch LINE group link');
       return linkHandler.handleBranchLink(event);
     }
 
-    if (/^#\s*แอดมิน\s+\S{1,255}$/i.test(text.trim())) {
+    if (isAdminLinkCommand(text)) {
       console.log('🔗 Routing to admin LINE user link');
       return linkHandler.handleAdminLink(event);
     }
 
-    if (/^#\s*(?:พนักงาน|register)\s+\S{1,255}$/i.test(text.trim())) {
+    if (isRegisterCommand(text)) {
       console.log('🔗 Routing to register handler');
       return registerHandler.handle(event);
     }
@@ -165,12 +198,6 @@ async function handleEvent(event) {
     }
 
     if (isLeaveStatusCommand(text)) {
-      if (!isPrivateEvent(event)) {
-        return replyOrPush({
-          replyToken: event.replyToken,
-          messages: [{ type: 'text', text: 'เช็คสถานะคำขอลา กรุณาพิมพ์ในแชทส่วนตัวกับบอท' }],
-        });
-      }
       console.log('🏖️ Routing to leave status tracking');
       return leaveHandler.handle(event);
     }
@@ -274,7 +301,6 @@ async function handleEvent(event) {
     }
 
     if (isLeaveStartCommand(text)) {
-      if (!isPrivateEvent(event)) return null;
       console.log('🏖️ Routing to leave handler');
       return leaveHandler.handle(event);
     }
