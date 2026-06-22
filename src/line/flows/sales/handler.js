@@ -72,6 +72,13 @@ function moneyEquals(left, right) {
   return Math.abs(Number(left || 0) - Number(right || 0)) < 0.005;
 }
 
+function hasSalesAmountData(parsed) {
+  return Number(parsed.total_sales || 0) > 0 ||
+    Number(parsed.cash_amount || 0) > 0 ||
+    Number(parsed.credit_amount || 0) > 0 ||
+    Number(parsed.transfer_amount || 0) > 0;
+}
+
 function buildSalesSummaryFromState(flowState, mode) {
   return salesSummaryFlex({
     branchCode: flowState.branch_code,
@@ -118,8 +125,8 @@ async function handleTextMessage(event) {
       title: 'ยังไม่พบพนักงานของผู้ส่ง',
       subtitle: 'ต้องเชื่อมกับ employees ก่อนบันทึกยอดขาย',
       message: 'ระบบต้องใช้ employees.id เพื่อบันทึกลง sales.submitted_by กรุณาผูก LINE ด้วยคำสั่ง #พนักงาน <รหัสพนักงาน> หรือกำหนด users.scope_type = employee และ users.scope_value = รหัสพนักงาน',
-      buttonLabel: 'วิธีผูก',
-      buttonText: '#พนักงาน <รหัสพนักงาน>',
+      buttonLabel: 'ดูคำสั่ง',
+      buttonText: '#คำสั่ง',
       color: '#B91C1C',
       altText: 'ยังไม่พบพนักงานของผู้ส่ง',
     })] });
@@ -135,6 +142,20 @@ async function handleTextMessage(event) {
     actor,
   });
   const parsed = parseSalesText(text);
+
+  if (!hasSalesAmountData(parsed)) {
+    await replyOrPush({ replyToken: event.replyToken, messages: [salesNoticeFlex({
+      title: 'กรุณาระบุยอดขาย',
+      subtitle: 'ยังไม่มีตัวเลขให้บันทึก',
+      message: 'พิมพ์ #ยอดขาย พร้อมยอดรวม เงินสด บัตร และโอน เช่น #ยอดขาย แล้วตามด้วยรายละเอียดตัวเลขในข้อความเดียวกัน',
+      buttonLabel: 'ดูคำสั่ง',
+      buttonText: '#คำสั่ง',
+      color: '#2563EB',
+      altText: 'กรุณาระบุยอดขาย',
+    })] });
+    return;
+  }
+
   const context = await resolveBranchFromEvent(event, text, { employeeId: employee ? employee.id : null });
   const branch = context.branch || (parsed.branch_code ? await branchRepo.findByCode(parsed.branch_code) : null);
 
@@ -143,8 +164,8 @@ async function handleTextMessage(event) {
       title: 'ไม่พบสาขา',
       subtitle: 'กรุณากำหนดสาขากลุ่มก่อน',
       message: 'สาขายังไม่ถูกผูกกับกลุ่มนี้ โปรดใช้คำสั่ง: #สาขา <ตัวย่อสาขา> เช่น #สาขา CCA หรือพิมพ์ #ยอดขาย CCA',
-      buttonLabel: 'สาขา CCA',
-      buttonText: '#สาขา CCA',
+      buttonLabel: 'ดูคำสั่ง',
+      buttonText: '#คำสั่ง',
       color: '#EA580C',
       altText: 'ไม่พบสาขา',
     })] });

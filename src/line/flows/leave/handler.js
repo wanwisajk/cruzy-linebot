@@ -241,8 +241,8 @@ async function trackLeaveStatus(event) {
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
       title: 'ยังไม่พบพนักงาน',
       message: 'กรุณาผูก LINE กับพนักงานก่อนเช็คสถานะคำขอลา',
-      buttonLabel: 'วิธีผูก',
-      buttonText: '#พนักงาน <รหัสพนักงาน>',
+      buttonLabel: 'ดูคำสั่ง',
+      buttonText: '#คำสั่ง',
       color: '#B91C1C',
       altText: 'ยังไม่พบพนักงาน',
     })] });
@@ -330,8 +330,8 @@ async function startLeave(event) {
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
       title: 'กรุณาผูก LINE',
       message: 'หากต้องการขอลางาน กรุณาผูก LINE กับพนักงานด้วยคำสั่ง: #พนักงาน <รหัสพนักงาน> หรือใช้บัญชีผู้ใช้งานระบบที่ลงทะเบียนแล้ว',
-      buttonLabel: 'วิธีผูก',
-      buttonText: '#พนักงาน <รหัสพนักงาน>',
+      buttonLabel: 'ดูคำสั่ง',
+      buttonText: '#คำสั่ง',
       color: '#EA580C',
       altText: 'กรุณาผูก LINE',
     })] });
@@ -347,8 +347,8 @@ async function startLeave(event) {
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
       title: missingTarget ? 'ยังไม่พบพนักงานของบัญชีนี้' : 'บัญชียังไม่ผูกพนักงาน',
       message,
-      buttonLabel: 'วิธีผูก',
-      buttonText: '#พนักงาน <รหัสพนักงาน>',
+      buttonLabel: 'ดูคำสั่ง',
+      buttonText: '#คำสั่ง',
       color: '#B91C1C',
       altText: 'ยังไม่พบพนักงานของบัญชีนี้',
     })] });
@@ -431,8 +431,8 @@ await replyOrPush({
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
       title: 'ไม่พบสาขา',
       message: 'ยังหาสาขาของคำขอลาไม่ได้ กรุณาพิมพ์สาขาเพิ่มในข้อความ เช่น สาขา: CCA หรืออัปเดตตารางงาน/สาขา preferred ในระบบ',
-      buttonLabel: 'ตัวอย่างข้อความ',
-      buttonText: 'วันที่เริ่มลา: 13/06/2026\nวันที่สิ้นสุด: 14/06/2026\nเหตุผล: ...',
+      buttonLabel: 'เริ่มใหม่',
+      buttonText: '#ขอลางาน',
       color: '#EA580C',
       altText: 'ไม่พบสาขา',
     })] });
@@ -468,8 +468,8 @@ async function handleAttachmentMessage(event) {
     await replyOrPush({ replyToken: event.replyToken, messages: [leaveFlex.noticeFlex({
       title: 'ไฟล์ไม่ถูกต้อง',
       message: 'รองรับเฉพาะรูปภาพหรือไฟล์ PDF สำหรับเอกสารแนบ กรุณาแปลงเป็น PDF หรือส่งรูปภาพ',
-      buttonLabel: 'ตัวอย่างไฟล์',
-      buttonText: 'ส่งไฟล์.pdf',
+      buttonLabel: 'ข้ามเอกสาร',
+      buttonText: 'ข้าม',
       color: '#EA580C',
       altText: 'ไฟล์ไม่รองรับ',
     })] });

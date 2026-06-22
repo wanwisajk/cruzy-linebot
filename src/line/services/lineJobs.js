@@ -17,7 +17,7 @@ const sentShiftReminderKeys = new Set();
 const BANGKOK_TIME_ZONE = 'Asia/Bangkok';
 const TH_GREGORY_LOCALE = 'th-TH-u-ca-gregory-nu-latn';
 const OPEN_REMINDER_MINUTES_BEFORE = 15;
-const CLOSE_REMINDER_MINUTES_BEFORE = 5;
+const CLOSE_REMINDER_MINUTES_BEFORE = 15;
 
 function inspectionLiffBaseUrl() {
   return normalizeLiffBaseUrl(process.env.LIFF_INSPECTION_URL);
@@ -133,7 +133,7 @@ function isReminderWindow(nowMinutes, targetMinutes) {
     nowMinutes < targetMinutes + 2;
 }
 
-function shiftReminderFlex({ type, branchCode, branchName, time, commandText }) {
+function shiftReminderFlex({ type, branchCode, branchName, time, commandText, minutesBefore }) {
   const isOpen = type === 'open';
   return bubble({
     title: isOpen ? '⏰ ใกล้เวลาเปิดร้าน' : '⏰ ใกล้เวลาปิดร้าน',
@@ -149,7 +149,7 @@ function shiftReminderFlex({ type, branchCode, branchName, time, commandText }) 
         type: 'text',
         text: isOpen
           ? 'ยังไม่พบการเปิดร้านของวันนี้ กรุณาเปิดร้านและส่งรูปหน้าร้านให้เรียบร้อย'
-          : 'เหลืออีก 5 นาทีถึงเวลาปิดร้าน กรุณาปิดร้านให้ตรงเวลาและส่งรูปปิดร้าน',
+          : `เหลืออีก ${minutesBefore || CLOSE_REMINDER_MINUTES_BEFORE} นาทีถึงเวลาปิดร้าน กรุณาปิดร้านให้ตรงเวลาและส่งรูปปิดร้าน`,
         size: 'sm',
         color: COLORS.ink,
         wrap: true,
@@ -778,55 +778,68 @@ async function notifyInspectionResults() {
 }
 
 async function fetchTodayBranchShiftWindows(workDate) {
+  const dayOfWeek = dayOfWeekFromDateString(workDate);
   const { data, error } = await supabase
-    .from('schedules')
-    .select('id,branch_id,shift_start,shift_end,status,is_off,branches(id,code,name,line_group_id)')
-    .eq('work_date', workDate)
-    .eq('is_off', false)
+    .from('branch_staffing_rules')
+    .select('id,branch_id,day_of_week,shift_start,shift_end,is_active,branches(id,code,name,line_group_id)')
+    .eq('day_of_week', dayOfWeek)
+    .eq('is_active', true)
     .order('shift_start', { ascending: true });
 
   if (error) {
-    console.warn('Shift reminder schedule query failed:', error.message || error);
+    console.warn('Shift reminder branch rule query failed:', error.message || error);
     return [];
   }
 
   const byBranch = new Map();
-  for (const schedule of data || []) {
-    if (!schedule || schedule.is_off) continue;
-    if (['cancelled', 'canceled'].includes(String(schedule.status || '').toLowerCase())) continue;
+  for (const rule of data || []) {
+    if (!rule || rule.is_active === false) continue;
 
-    const branch = schedule.branches;
+    const branch = rule.branches;
     if (!branch || !branch.line_group_id) continue;
 
-    const startMinutes = minutesOfTime(schedule.shift_start, '09:00:00');
-    const endMinutes = minutesOfTime(schedule.shift_end, '20:00:00');
+    const startMinutes = minutesOfTime(rule.shift_start, '09:00:00');
+    const endMinutes = minutesOfTime(rule.shift_end, '20:00:00');
     if (startMinutes == null || endMinutes == null) continue;
 
-    const key = String(schedule.branch_id || branch.id);
+    const key = String(rule.branch_id || branch.id);
     const existing = byBranch.get(key) || {
-      branchId: schedule.branch_id || branch.id,
+      branchId: rule.branch_id || branch.id,
       branchCode: branch.code,
       branchName: branch.name,
       lineGroupId: branch.line_group_id,
-      shiftStart: schedule.shift_start || '09:00:00',
-      shiftEnd: schedule.shift_end || '20:00:00',
+      shiftStart: rule.shift_start || '09:00:00',
+      shiftEnd: rule.shift_end || '20:00:00',
       startMinutes,
       endMinutes,
     };
 
     if (startMinutes < existing.startMinutes) {
       existing.startMinutes = startMinutes;
-      existing.shiftStart = schedule.shift_start || existing.shiftStart;
+      existing.shiftStart = rule.shift_start || existing.shiftStart;
     }
     if (endMinutes > existing.endMinutes) {
       existing.endMinutes = endMinutes;
-      existing.shiftEnd = schedule.shift_end || existing.shiftEnd;
+      existing.shiftEnd = rule.shift_end || existing.shiftEnd;
     }
 
     byBranch.set(key, existing);
   }
 
   return [...byBranch.values()];
+}
+
+function dayOfWeekFromDateString(dateText) {
+  const match = String(dateText || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    const parts = bangkokDateParts();
+    return new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
 async function fetchBranchAttendanceStatus(workDate, branchIds) {
@@ -891,7 +904,8 @@ async function sendShiftReminders(date = new Date()) {
           branchCode: shift.branchCode,
           branchName: shift.branchName,
           time: timeLabel(shift.shiftStart, '09:00:00'),
-          commandText: `#เปิดร้าน ${shift.branchCode || ''}`.trim(),
+          commandText: '#เปิดร้าน',
+          minutesBefore: OPEN_REMINDER_MINUTES_BEFORE,
         }));
         rememberShiftReminder(openKey, date);
       } catch (sendError) {
@@ -913,7 +927,8 @@ async function sendShiftReminders(date = new Date()) {
           branchCode: shift.branchCode,
           branchName: shift.branchName,
           time: timeLabel(shift.shiftEnd, '20:00:00'),
-          commandText: `#ปิดร้าน ${shift.branchCode || ''}`.trim(),
+          commandText: '#ปิดร้าน',
+          minutesBefore: CLOSE_REMINDER_MINUTES_BEFORE,
         }));
         rememberShiftReminder(closeKey, date);
       } catch (sendError) {
