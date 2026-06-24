@@ -21,7 +21,7 @@ function getSubmitterName(actor, lineUserId) {
 }
 
 function inspectionLiffBaseUrl() {
-  return getConfiguredLiffBaseUrl();
+  return getConfiguredLiffBaseUrl('LIFF_INSPECTION_URL', 'LIFF_URL');
 }
 
 function buildInspectionLiffUrl({ branchId, employeeId, workDate, lineUserId, branchCode }) {

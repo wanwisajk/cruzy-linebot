@@ -20,7 +20,7 @@ const OPEN_REMINDER_MINUTES_BEFORE = 15;
 const CLOSE_REMINDER_MINUTES_BEFORE = 15;
 
 function inspectionLiffBaseUrl() {
-  return getConfiguredLiffBaseUrl();
+  return getConfiguredLiffBaseUrl('LIFF_INSPECTION_URL', 'LIFF_URL');
 }
 
 function buildInspectionDetailUrl(inspection) {

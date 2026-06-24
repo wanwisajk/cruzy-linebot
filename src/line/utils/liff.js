@@ -23,7 +23,10 @@ function buildConfiguredLiffUrl(path, envKey = 'LIFF_URL', fallbackEnvKey = null
 }
 
 function appendQueryToLiffUrl(baseUrl, query) {
-  const queryString = query instanceof URLSearchParams ? query.toString() : String(query || '').replace(/^\?/, '');
+  const queryString = query instanceof URLSearchParams
+    ? query.toString()
+    : String(query || '').replace(/^\?/, '');
+
   if (!baseUrl || !queryString) return baseUrl || null;
 
   const separator = baseUrl.includes('?') ? '&' : '?';

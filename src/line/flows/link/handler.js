@@ -52,7 +52,7 @@ async function handleBranchLink(event) {
     replyToken: event.replyToken,
     messages: [{
       type: 'text',
-      text: `ผูกกลุ่ม LINE กับสาขา ${linked.code} สำเร็จ\nชื่อกลุ่ม: ${groupName || 'อ่านชื่อกลุ่มไม่ได้'}\nGroup ID: ${groupId}`,
+      text: `ผูกกลุ่ม LINE กับสาขา ${linked.code} สำเร็จ\nชื่อกลุ่ม: ${groupName || 'อ่านชื่อกลุ่มไม่ได้'}`,
     }],
   });
 }

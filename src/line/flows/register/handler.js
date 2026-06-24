@@ -46,16 +46,13 @@ async function getLineDisplayName(lineUserId) {
 }
 
 function buildConfirmText({ employee, employeeId, lineDisplayName, lineUserId }) {
-  const currentLineText = employee.line_user_id && employee.line_user_id !== lineUserId
-    ? `\nLINE เดิมในระบบ: ${shortLineId(employee.line_user_id)}`
-    : '';
+  const currentLineText = employee.line_user_id && employee.line_user_id !== lineUserId;
 
   return [
     'ยืนยันการผูก LINE กับพนักงาน',
     `ชื่อ LINE: ${lineDisplayName || shortLineId(lineUserId)}`,
     `พนักงาน: ${employee.name}${employee.nickname ? ` (${employee.nickname})` : ''}`,
     `รหัส: ${employeeId}`,
-    `${currentLineText}`,
     '',
     'ถ้าถูกต้อง ตอบ: ใช่',
     'ถ้าไม่ถูกต้อง ตอบ: ไม่ใช่',
@@ -93,7 +90,7 @@ async function bindEmployeeLine({ replyToken, employeeId, lineUserId }) {
   });
 
   const updatedText = employee.line_user_id && employee.line_user_id !== lineUserId
-    ? `อัปเดต LINE สำเร็จ\nชื่อ: ${employee.name}\nรหัส: ${employeeId}\nจาก: ${shortLineId(employee.line_user_id)}\nเป็น: ${shortLineId(lineUserId)}`
+    ? `อัปเดต LINE สำเร็จ\nชื่อ: ${employee.name}\nรหัส: ${employeeId}}`
     : `ผูก LINE สำเร็จ\nชื่อ: ${employee.name}\nรหัส: ${employeeId}`;
   const movedText = linkedToOtherEmployee
     ? `\n\nหมายเหตุ: LINE นี้เคยผูกกับ ${existingEmployee.name || existingEmployee.id} ระบบย้ายมาที่รหัสนี้แล้ว`
