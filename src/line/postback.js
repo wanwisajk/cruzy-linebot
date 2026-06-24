@@ -11,6 +11,7 @@ const { fetchInspectionById, updateInspectionReview } = require('./flows/inspect
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
 const { recordDeposit, saveDepositSlipAttachments } = require('./flows/deposit/service');
 const { getDisplayName } = require('./utils/displayName');
+const linkHandler = require('./flows/link/handler');
 const {
   getBranchCashPending,
   syncDepositLedger,
@@ -322,6 +323,10 @@ async function handlePostback(event) {
   const normalizedData = String(data).trim();
 
   const actor = event.source && event.source.userId ? event.source.userId : null;
+
+  if (await linkHandler.handleBranchLinkPostback(event, normalizedData)) {
+    return true;
+  }
 
   // inspect_action|<inspectionId>|approve or problem
   if (normalizedData.startsWith('inspect_action|')) {

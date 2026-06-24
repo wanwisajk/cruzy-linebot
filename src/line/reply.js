@@ -40,6 +40,20 @@ function isTransientLineSendError(error) {
   return ['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'].includes(code);
 }
 
+function lineErrorText(error) {
+  const detail = getLineErrorDetail(error);
+  return [
+    detail.message,
+    typeof detail.response === 'string' ? detail.response : JSON.stringify(detail.response || ''),
+    typeof detail.details === 'string' ? detail.details : JSON.stringify(detail.details || ''),
+  ].filter(Boolean).join(' ');
+}
+
+function isInvalidReplyTokenError(error) {
+  const statusCode = error && (error.statusCode || error.status);
+  return Number(statusCode) === 400 && /invalid reply token/i.test(lineErrorText(error));
+}
+
 async function sendLineMessage({ replyToken, to, messages }) {
   if (replyToken) {
     return lineClient.replyMessage({ replyToken, messages });
@@ -61,6 +75,11 @@ async function replyOrPush({ replyToken, to, messages }) {
         return await sendLineMessage({ replyToken, to, messages });
       } catch (error) {
         lastError = error;
+        if (replyToken && to && isInvalidReplyTokenError(error)) {
+          console.warn('LINE reply token invalid, falling back to push:', getLineErrorDetail(error));
+          return lineClient.pushMessage({ to, messages });
+        }
+
         if (attempt >= maxAttempts || !isTransientLineSendError(error)) {
           throw error;
         }
@@ -81,5 +100,6 @@ async function replyOrPush({ replyToken, to, messages }) {
 
 module.exports = {
   getLineErrorDetail,
+  isInvalidReplyTokenError,
   replyOrPush,
 };
