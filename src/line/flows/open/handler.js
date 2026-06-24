@@ -64,7 +64,7 @@ async function handle(event) {
 
   const actor = lineUserId ? await resolveLineActor(lineUserId) : null;
   const employee = actor && actor.employee ? actor.employee : null;
-  if (!employee) {
+  if (!employee && !(actor && actor.user)) {
     await replyOrPush({
       replyToken: event.replyToken,
       messages: [{ type: 'text', text: 'ยังไม่พบพนักงานของผู้เปิดร้าน กรุณาผูก LINE ด้วยคำสั่ง: #พนักงาน <รหัสพนักงาน>' }],
