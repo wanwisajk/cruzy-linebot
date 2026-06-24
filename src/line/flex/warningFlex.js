@@ -1,4 +1,8 @@
+const { buildConfiguredLiffUrl } = require('../utils/liff');
+
 function warningFlex({ id, employeeName, level, issueDate, note, status, signed }) {
+  const warningUri = buildConfiguredLiffUrl(`warnings/${id || ''}`);
+
   return {
     type: 'flex',
     altText: 'หนังสือเตือน',
@@ -48,7 +52,7 @@ function warningFlex({ id, employeeName, level, issueDate, note, status, signed 
         layout: 'vertical',
         spacing: 'sm',
         contents: [
-          { type: 'button', style: 'primary', color: '#16A34A', action: { type: 'uri', label: 'เปิดเอกสาร', uri: `${process.env.LIFF_URL || 'https://liff.example.com'}/warnings/${id || ''}` } },
+          { type: 'button', style: 'primary', color: '#16A34A', action: { type: 'uri', label: 'เปิดเอกสาร', uri: warningUri } },
         ],
       },
     },

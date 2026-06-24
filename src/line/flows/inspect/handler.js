@@ -5,7 +5,7 @@ const { resolveLineActor } = require('../../utils/actor');
 const { resolveBranchFromEvent } = require('../../utils/context');
 const { parseDateFromText } = require('../../utils/attendance');
 const { getDisplayName } = require('../../utils/displayName');
-const { normalizeLiffBaseUrl, appendQueryToLiffUrl } = require('../../utils/liff');
+const { getConfiguredLiffBaseUrl, appendQueryToLiffUrl } = require('../../utils/liff');
 
 function getStateKey(event) {
   const source = event.source || {};
@@ -21,7 +21,7 @@ function getSubmitterName(actor, lineUserId) {
 }
 
 function inspectionLiffBaseUrl() {
-  return normalizeLiffBaseUrl(process.env.LIFF_INSPECTION_URL);
+  return getConfiguredLiffBaseUrl();
 }
 
 function buildInspectionLiffUrl({ branchId, employeeId, workDate, lineUserId, branchCode }) {
@@ -100,7 +100,7 @@ async function startInspection(event) {
   if (!liffUrl) {
     await replyOrPush({
       replyToken: event.replyToken,
-      messages: [{ type: 'text', text: 'ยังไม่ได้ตั้งค่า LIFF_URL หรือ LIFF_INSPECTION_URL สำหรับเปิดหน้าตรวจร้าน' }],
+      messages: [{ type: 'text', text: 'ยังไม่ได้ตั้งค่า LIFF_URL สำหรับเปิดหน้าตรวจร้าน' }],
     });
     return null;
   }

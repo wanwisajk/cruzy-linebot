@@ -9,7 +9,7 @@ const depositFlex = require('../flex/depositFlex');
 const { inspectionPendingFlex, inspectionResultFlex } = require('../flex/inspectFlex');
 const { COLORS, row: uiRow, card, bubble, primaryButton } = require('../flex/uiFlex');
 const { getDisplayName } = require('../utils/displayName');
-const { normalizeLiffBaseUrl, appendQueryToLiffUrl } = require('../utils/liff');
+const { getConfiguredLiffBaseUrl, appendQueryToLiffUrl } = require('../utils/liff');
 const userRepo = require('../../../backend/repositories/user.repo');
 
 let running = false;
@@ -20,7 +20,7 @@ const OPEN_REMINDER_MINUTES_BEFORE = 15;
 const CLOSE_REMINDER_MINUTES_BEFORE = 15;
 
 function inspectionLiffBaseUrl() {
-  return normalizeLiffBaseUrl(process.env.LIFF_INSPECTION_URL);
+  return getConfiguredLiffBaseUrl();
 }
 
 function buildInspectionDetailUrl(inspection) {

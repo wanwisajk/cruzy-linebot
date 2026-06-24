@@ -1,3 +1,5 @@
+const { buildConfiguredLiffUrl } = require('../utils/liff');
+
 function row(label, value, color = '#111827') {
   return {
     type: 'box',
@@ -14,6 +16,8 @@ function money(value) {
 }
 
 function payrollFlex({ employeeName, gross, allowance, deductions, net, payCycle }) {
+  const payrollUri = buildConfiguredLiffUrl('payroll');
+
   return {
     type: 'flex',
     altText: 'สรุปเงินเดือน',
@@ -75,7 +79,7 @@ function payrollFlex({ employeeName, gross, allowance, deductions, net, payCycle
         layout: 'vertical',
         spacing: 'sm',
         contents: [
-          { type: 'button', style: 'primary', color: '#16A34A', action: { type: 'uri', label: 'ดูรายละเอียด', uri: `${process.env.LIFF_URL || 'https://liff.example.com'}/payroll` } },
+          { type: 'button', style: 'primary', color: '#16A34A', action: { type: 'uri', label: 'ดูรายละเอียด', uri: payrollUri } },
         ],
       },
     },
