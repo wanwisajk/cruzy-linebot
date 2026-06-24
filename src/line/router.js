@@ -153,6 +153,10 @@ async function handleEvent(event) {
     const text = event.message && event.message.type === 'text' ? event.message.text : '';
     const lower = String(text || '').trim().toLowerCase();
 
+    if (await registerHandler.handlePendingConfirmation(event)) {
+      return;
+    }
+
     // Commands
     if (isCommandListCommand(text)) {
       return replyOrPush({ replyToken: event.replyToken, messages: [commandFlex()] });

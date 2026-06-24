@@ -70,13 +70,6 @@ async function handle(event) {
   const stateKey = getCloseStateKey(source);
   const actorInfo = lineUserId ? await resolveLineActor(lineUserId) : null;
   const employee = actorInfo && actorInfo.employee ? actorInfo.employee : null;
-  if (!employee) {
-    await replyOrPush({
-      replyToken: event.replyToken,
-      messages: [{ type: 'text', text: 'ยังไม่พบพนักงานของผู้ปิดร้าน กรุณาผูก LINE ด้วยคำสั่ง: #พนักงาน <รหัสพนักงาน>' }],
-    });
-    return null;
-  }
 
   const actorName = getDisplayName(employee, actorInfo && actorInfo.user, actorInfo && actorInfo.name, lineUserId);
   const audit = buildLineAudit({ lineUserId, lineGroupId: source.groupId || source.roomId || null, actor: actorInfo });

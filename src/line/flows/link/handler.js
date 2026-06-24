@@ -1,7 +1,20 @@
 const branchRepo = require('../../../../backend/repositories/branch.repo');
 const userRepo = require('../../../../backend/repositories/user.repo');
+const { lineClient } = require('../../../../backend/config/line');
 const { replyOrPush } = require('../../reply');
 const { logEvent } = require('../../utils/audit');
+
+async function getLineGroupName(groupId) {
+  if (!groupId) return null;
+
+  try {
+    const summary = await lineClient.getGroupSummary(groupId);
+    return summary && summary.groupName ? String(summary.groupName).trim() : null;
+  } catch (err) {
+    console.warn('Unable to fetch LINE group summary:', err.message || err, { groupId });
+    return null;
+  }
+}
 
 async function handleBranchLink(event) {
   const text = event.message && event.message.type === 'text' ? event.message.text : '';
@@ -25,11 +38,22 @@ async function handleBranchLink(event) {
     return;
   }
 
-  const linked = await branchRepo.updateLineGroupIdByCode(branchCode, groupId);
-  await logEvent('branch_line_group_linked', { branch_id: linked.id, branch_code: linked.code, line_group_id: groupId });
+  const groupName = await getLineGroupName(groupId);
+  const linked = await branchRepo.updateLineGroupIdByCode(branchCode, groupId, groupName);
+  await logEvent('branch_line_group_linked', {
+    branch_id: linked.id,
+    branch_code: linked.code,
+    line_group_id: groupId,
+    line_group_name: groupName,
+    previous_line_group_id: branch.line_group_id || null,
+    previous_line_group_name: branch.line_group_name || null,
+  });
   await replyOrPush({
     replyToken: event.replyToken,
-    messages: [{ type: 'text', text: `ผูกกลุ่ม LINE กับสาขา ${linked.code} สำเร็จ` }],
+    messages: [{
+      type: 'text',
+      text: `ผูกกลุ่ม LINE กับสาขา ${linked.code} สำเร็จ\nชื่อกลุ่ม: ${groupName || 'อ่านชื่อกลุ่มไม่ได้'}\nGroup ID: ${groupId}`,
+    }],
   });
 }
 

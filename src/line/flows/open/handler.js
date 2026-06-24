@@ -64,13 +64,6 @@ async function handle(event) {
 
   const actor = lineUserId ? await resolveLineActor(lineUserId) : null;
   const employee = actor && actor.employee ? actor.employee : null;
-  if (!employee && !(actor && actor.user)) {
-    await replyOrPush({
-      replyToken: event.replyToken,
-      messages: [{ type: 'text', text: 'ยังไม่พบพนักงานของผู้เปิดร้าน กรุณาผูก LINE ด้วยคำสั่ง: #พนักงาน <รหัสพนักงาน>' }],
-    });
-    return null;
-  }
 
   const employeeName = getDisplayName(employee, actor && actor.user, actor && actor.name, lineUserId);
   const audit = buildLineAudit({ lineUserId, lineGroupId: source.groupId || source.roomId || null, actor });

@@ -87,6 +87,21 @@ async function updateLineUserId(id, lineUserId) {
   return data;
 }
 
+async function clearLineUserId(id) {
+  const { data, error } = await supabase
+    .from('employees')
+    .update({ line_user_id: null })
+    .eq('id', id)
+    .select('id,name,nickname,position,phone,emp_type,line_user_id,regions(name)')
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
 module.exports = {
   findByLineUserId,
   searchByName,
@@ -94,4 +109,5 @@ module.exports = {
   findById,
   findByUserIdentity,
   updateLineUserId,
+  clearLineUserId,
 };
