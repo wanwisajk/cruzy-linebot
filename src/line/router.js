@@ -3,17 +3,19 @@ const closeHandler = require('./flows/close/handler');
 const inspectHandler = require('./flows/inspect/handler');
 const registerHandler = require('./flows/register/handler');
 const { handleTextMessage, handleImageMessage, handleUploadPrompt } = require('./flows/sales/handler');
-const { getFlowState, FLOW_STATES } = require('./flows/sales/state');
+const { getFlowState, setFlowState, FLOW_STATES } = require('./flows/sales/state');
 const depositHandler = require('./flows/deposit/handler');
-const { getDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
+const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
 const commandFlex = require('./flex/commandFlex');
 const employeeHandler = require('./flows/employee/handler');
 const { replyOrPush } = require('./reply');
 const linkHandler = require('./flows/link/handler');
 const { logInboundLineEvent } = require('./utils/audit');
-const { hasLeaveState } = require('./flows/leave/state');
+const { hasLeaveState, setLeaveState } = require('./flows/leave/state');
 const leaveHandler = require('./flows/leave/handler');
 const scheduleHandler = require('./flows/schedule/handler');
+const { getOpenStateKey, clearOpenState } = require('./flows/open/state');
+const { getCloseStateKey, clearCloseState } = require('./flows/close/state');
 
 function isOpenShopCommand(text) {
   return /^#\s*เปิด\s*ร้าน(?:\s|$)/i.test(String(text || '').trim());
@@ -92,6 +94,19 @@ function isPrivateOnlyCommand(text) {
     isAttendanceAlertCommand(text) ||
     isLeaveStatusCommand(text) ||
     isLeaveStartCommand(text);
+}
+
+function resetActiveFlowsForNewCommand(event, activeFlow) {
+  const source = event.source || {};
+  const lineUserId = source.userId || null;
+  const openStateKey = getOpenStateKey(source);
+  const closeStateKey = getCloseStateKey(source);
+
+  if (activeFlow !== 'sales' && lineUserId) setFlowState(lineUserId, null);
+  if (activeFlow !== 'deposit' && lineUserId) setDepositState(lineUserId, null);
+  if (activeFlow !== 'leave' && lineUserId) setLeaveState(lineUserId, null);
+  if (activeFlow !== 'open' && openStateKey) clearOpenState(openStateKey);
+  if (activeFlow !== 'close' && closeStateKey) clearCloseState(closeStateKey);
 }
 
 async function replyPrivateOnlyCommand(event) {
@@ -208,11 +223,13 @@ async function handleEvent(event) {
 
     if (isOpenShopCommand(text)) {
       console.log('🚪 Routing to open shop handler');
+      resetActiveFlowsForNewCommand(event, 'open');
       return openHandler.handle(event);
     }
 
     if (isCloseShopCommand(text)) {
       console.log('🌙 Routing to close shop handler');
+      resetActiveFlowsForNewCommand(event, 'close');
       return closeHandler.handle(event);
     }
 
@@ -291,21 +308,25 @@ async function handleEvent(event) {
 
     if (isInspectCommand(text)) {
       console.log('🔍 Routing to inspect handler');
+      resetActiveFlowsForNewCommand(event, 'inspect');
       return inspectHandler.handle(event);
     }
 
     if (isSalesCommand(text)) {
       console.log('💰 Routing to sales handler');
+      resetActiveFlowsForNewCommand(event, 'sales');
       return handleTextMessage(event);
     }
 
     if (isDepositCommand(text)) {
       console.log('🏧 Routing to deposit handler');
+      resetActiveFlowsForNewCommand(event, 'deposit');
       return depositHandler.handle(event);
     }
 
     if (isLeaveStartCommand(text)) {
       console.log('🏖️ Routing to leave handler');
+      resetActiveFlowsForNewCommand(event, 'leave');
       return leaveHandler.handle(event);
     }
 
