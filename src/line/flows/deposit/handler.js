@@ -14,6 +14,10 @@ const { resolveBranchFromEvent } = require('../../utils/context');
 const { getDisplayName } = require('../../utils/displayName');
 const { buildLineAudit } = require('../../utils/lineAudit');
 
+function getReplyTarget(source = {}) {
+  return source.groupId || source.roomId || source.userId || null;
+}
+
 function bangkokDateString(date) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Bangkok',
@@ -245,6 +249,7 @@ async function handleActiveTextMessage(event) {
 async function handleImageMessage(event) {
   const source = event.source || {};
   const actor = source.userId || null;
+  const target = getReplyTarget(source);
 
   if (!actor) return false;
 
@@ -288,7 +293,7 @@ async function handleImageMessage(event) {
     varianceAmount: state.varianceAmount,
     pendingCashBalance,
   });
-  await replyOrPush({ replyToken: event.replyToken, messages: [confirmFlex] });
+  await replyOrPush({ replyToken: event.replyToken, to: target, messages: [confirmFlex] });
   return true;
 }
 

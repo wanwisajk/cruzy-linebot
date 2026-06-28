@@ -188,7 +188,7 @@ async function completeOpen({ event, stateKey, state, imageMessageId, imageRecei
     attachmentUrl: record.attachment_url,
   });
 
-  await replyOrPush({ replyToken: event.replyToken, to: null, messages: [flex] });
+  await replyOrPush({ replyToken: event.replyToken, to: state.target || getReplyTarget(event.source || {}), messages: [flex] });
   clearOpenState(stateKey);
 
   return record;

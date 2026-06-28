@@ -75,9 +75,14 @@ async function replyOrPush({ replyToken, to, messages }) {
         return await sendLineMessage({ replyToken, to, messages });
       } catch (error) {
         lastError = error;
-        if (replyToken && to && isInvalidReplyTokenError(error)) {
-          console.warn('LINE reply token invalid, falling back to push:', getLineErrorDetail(error));
-          return lineClient.pushMessage({ to, messages });
+        if (replyToken && isInvalidReplyTokenError(error)) {
+          if (to) {
+            console.warn('LINE reply token invalid, falling back to push:', getLineErrorDetail(error));
+            return lineClient.pushMessage({ to, messages });
+          }
+
+          console.warn('LINE reply token invalid and no push target is available:', getLineErrorDetail(error));
+          return null;
         }
 
         if (attempt >= maxAttempts || !isTransientLineSendError(error)) {

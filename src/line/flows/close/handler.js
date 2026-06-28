@@ -254,6 +254,7 @@ async function completeClose({ event, stateKey, state, imageMessageId, imageRece
 
   await replyOrPush({
     replyToken: event.replyToken,
+    to: state.target || getReplyTarget(event.source || {}),
     messages: [closeFlex({
       branchCode: state.branchCode,
       employeeName: state.actorName,
