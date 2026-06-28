@@ -237,7 +237,16 @@ async function syncInspectionPhotoCount(inspectionId) {
   return { inspection: data, photoCount };
 }
 
-async function updateInspectionReview({ inspectionId, status, reviewedBy, reviewTime, managerNote, actorType, actorId }) {
+async function updateInspectionReview({
+  inspectionId,
+  status,
+  reviewedBy,
+  reviewTime,
+  managerNote,
+  actorType,
+  actorId,
+  expectedStatuses,
+}) {
   const payload = {
     status,
     reviewed_by: reviewedBy || null,
@@ -251,12 +260,18 @@ async function updateInspectionReview({ inspectionId, status, reviewedBy, review
   if (actorId) payload.audit_actor_id = String(actorId);
   if (reviewedBy) payload.audit_actor_name = reviewedBy;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('store_inspections')
     .update(payload)
-    .eq('id', inspectionId)
+    .eq('id', inspectionId);
+
+  if (Array.isArray(expectedStatuses) && expectedStatuses.length > 0) {
+    query = query.in('status', expectedStatuses);
+  }
+
+  const { data, error } = await query
     .select('*,branches(code,name),employees(name,nickname,line_user_id)')
-    .single();
+    .maybeSingle();
 
   if (error) {
     if (isMissingColumnError(error, 'audit_actor_id') || isMissingColumnError(error, 'audit_actor_type')) {
@@ -265,12 +280,18 @@ async function updateInspectionReview({ inspectionId, status, reviewedBy, review
       delete fallbackPayload.audit_actor_id;
       delete fallbackPayload.audit_actor_name;
 
-      const retry = await supabase
+      let retryQuery = supabase
         .from('store_inspections')
         .update(fallbackPayload)
-        .eq('id', inspectionId)
+        .eq('id', inspectionId);
+
+      if (Array.isArray(expectedStatuses) && expectedStatuses.length > 0) {
+        retryQuery = retryQuery.in('status', expectedStatuses);
+      }
+
+      const retry = await retryQuery
         .select('*,branches(code,name),employees(name,nickname,line_user_id)')
-        .single();
+        .maybeSingle();
 
       if (retry.error) throw retry.error;
       return retry.data;

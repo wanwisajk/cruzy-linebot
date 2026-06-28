@@ -8,6 +8,14 @@ function isMissingColumnError(error) {
   return error && (error.code === 'PGRST204' || /column|schema cache/i.test(message));
 }
 
+function isConfirmedByForeignKeyError(error) {
+  const message = `${error && error.message || ''} ${error && error.details || ''}`;
+  return error && (
+    error.code === '23503' ||
+    /sales_confirmed_by_fkey|foreign key constraint/i.test(message)
+  );
+}
+
 async function createDraftSale({
   branchId,
   date,
@@ -117,29 +125,38 @@ async function updateSaleStatusWithTimestamp(saleId, status, options = {}) {
     payload.line_notified = false;
   }
 
-  let { data, error } = await supabase.from('sales').update(payload).eq('id', saleId).select('*').single();
-  if (error && isMissingColumnError(error)) {
+  let query = supabase.from('sales').update(payload).eq('id', saleId);
+  if (Array.isArray(options.expectedStatuses) && options.expectedStatuses.length > 0) {
+    query = query.in('status', options.expectedStatuses);
+  }
+
+  let { data, error } = await query.select('*').maybeSingle();
+  if (error && (isMissingColumnError(error) || isConfirmedByForeignKeyError(error))) {
+    const missingColumn = isMissingColumnError(error);
     const fallbackPayload = {
       status: payload.status,
       confirmed_at: payload.confirmed_at,
       updated_at: payload.updated_at,
     };
-    if (options.auditActorType) fallbackPayload.audit_actor_type = options.auditActorType;
-    if (options.auditActorId) fallbackPayload.audit_actor_id = String(options.auditActorId);
-    if (options.auditActorName) fallbackPayload.audit_actor_name = options.auditActorName;
-    if (typeof options.lineNotified === 'boolean') {
+    if (!missingColumn && options.auditActorType) fallbackPayload.audit_actor_type = options.auditActorType;
+    if (!missingColumn && options.auditActorId) fallbackPayload.audit_actor_id = String(options.auditActorId);
+    if (!missingColumn && options.auditActorName) fallbackPayload.audit_actor_name = options.auditActorName;
+    if (!missingColumn && typeof options.lineNotified === 'boolean') {
       fallbackPayload.line_notified = options.lineNotified;
     }
-    const retry = await supabase
+    let retryQuery = supabase
       .from('sales')
       .update(fallbackPayload)
-      .eq('id', saleId)
-      .select('*')
-      .single();
+      .eq('id', saleId);
+    if (Array.isArray(options.expectedStatuses) && options.expectedStatuses.length > 0) {
+      retryQuery = retryQuery.in('status', options.expectedStatuses);
+    }
+    const retry = await retryQuery.select('*').maybeSingle();
     data = retry.data;
     error = retry.error;
   }
   if (error) throw error;
+  if (!data) return null;
 
   if (status === 'rejected') {
     await deleteSaleCashLedger(data.id);
@@ -236,4 +253,12 @@ async function saveAttachments(saleId, messages) {
   return attachments;
 }
 
-module.exports = { createDraftSale, updateSaleStatus, updateSaleStatusWithTimestamp, saveAttachments };
+module.exports = {
+  createDraftSale,
+  updateSaleStatus,
+  updateSaleStatusWithTimestamp,
+  saveAttachments,
+  _test: {
+    isConfirmedByForeignKeyError,
+  },
+};

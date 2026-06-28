@@ -9,7 +9,7 @@ const leaveFlex = require('./flex/leaveFlex');
 const { resolveLineActor } = require('./utils/actor');
 const { fetchInspectionById, updateInspectionReview } = require('./flows/inspect/service');
 const { getDepositState, setDepositState, DEPOSIT_STATUS } = require('./flows/deposit/state');
-const { recordDeposit, saveDepositSlipAttachments } = require('./flows/deposit/service');
+const { recordDeposit, saveDepositSlipAttachments, updateDepositStatusWithTimestamp } = require('./flows/deposit/service');
 const { getDisplayName } = require('./utils/displayName');
 const linkHandler = require('./flows/link/handler');
 const {
@@ -105,7 +105,13 @@ async function finalizeInspectionReview({ event, inspection, inspectionId, actio
     managerNote: resolvedManagerNote,
     actorType: reviewer.actorType,
     actorId: reviewer.actorId,
+    expectedStatuses: ['pending'],
   });
+
+  if (!updated) {
+    await replyInspectionExistingResult({ replyTarget });
+    return;
+  }
 
   await logEvent(action === 'approve' ? 'inspection_approved' : 'inspection_marked_problem', {
     table_name: 'store_inspections',
@@ -218,8 +224,9 @@ async function resolveApprovalActor(event) {
   }
 
   const displayName = getDisplayName(employee, actor && actor.user, profileName, lineUserId);
-  const displayMatchedName = displayName && displayName !== '-' ? displayName : null;
-  const confirmedByUsername = displayMatchedName || await fetchMatchingUsername(employee);
+  const confirmedByUsername = actor && actor.user && actor.user.username
+    ? actor.user.username
+    : await fetchMatchingUsername(employee);
   return {
     lineUserId,
     displayName,
@@ -663,21 +670,21 @@ async function handlePostback(event) {
     const actorName = actorInfo.displayName;
 
     if (action === 'approve') {
-      const payload = {
-        status: 'verified',
-        verified_at: new Date().toISOString(),
-        verified_by: actorInfo.confirmedByUsername || null,
-        updated_at: new Date().toISOString(),
-        line_notified: false,
-        audit_actor_type: actorInfo.actorType || 'line',
-        audit_actor_id: actorInfo.actorId ? String(actorInfo.actorId) : actor || null,
-        audit_actor_name: actorName || null,
-      };
-
-      const { data: updated, error: updateError } = await supabase.from('cash_deposits').update(payload).eq('id', depositId).select('*').maybeSingle();
+      const { data: updated, error: updateError } = await updateDepositStatusWithTimestamp(depositId, 'verified', {
+        verifiedByUsername: actorInfo.confirmedByUsername,
+        lineNotified: false,
+        expectedStatuses: ['waiting'],
+        auditActorType: actorInfo.actorType || 'line',
+        auditActorId: actorInfo.actorId ? String(actorInfo.actorId) : actor || null,
+        auditActorName: actorName || null,
+      }).then((data) => ({ data, error: null })).catch((error) => ({ data: null, error }));
       if (updateError) {
         console.warn('Failed to update deposit status:', updateError.message || updateError, { depositId });
         await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'เกิดข้อผิดพลาดในการบันทึกสถานะ กรุณาลองใหม่' }] });
+        return true;
+      }
+      if (!updated) {
+        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'รายการนี้ถูกดำเนินการไปแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }] });
         return true;
       }
 
@@ -691,20 +698,21 @@ async function handlePostback(event) {
     }
 
     if (action === 'reject') {
-      const payload = {
-        status: 'rejected',
-        verified_at: new Date().toISOString(),
-        verified_by: actorInfo.confirmedByUsername || null,
-        updated_at: new Date().toISOString(),
-        line_notified: false,
-        audit_actor_type: actorInfo.actorType || 'line',
-        audit_actor_id: actorInfo.actorId ? String(actorInfo.actorId) : actor || null,
-        audit_actor_name: actorName || null,
-      };
-      const { data: updated, error: updateError } = await supabase.from('cash_deposits').update(payload).eq('id', depositId).select('*').maybeSingle();
+      const { data: updated, error: updateError } = await updateDepositStatusWithTimestamp(depositId, 'rejected', {
+        verifiedByUsername: actorInfo.confirmedByUsername,
+        lineNotified: false,
+        expectedStatuses: ['waiting'],
+        auditActorType: actorInfo.actorType || 'line',
+        auditActorId: actorInfo.actorId ? String(actorInfo.actorId) : actor || null,
+        auditActorName: actorName || null,
+      }).then((data) => ({ data, error: null })).catch((error) => ({ data: null, error }));
       if (updateError) {
         console.warn('Failed to update deposit status (reject):', updateError.message || updateError, { depositId });
         await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'เกิดข้อผิดพลาดในการบันทึกสถานะ กรุณาลองใหม่' }] });
+        return true;
+      }
+      if (!updated) {
+        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'รายการนี้ถูกดำเนินการไปแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }] });
         return true;
       }
 
@@ -763,13 +771,18 @@ async function handlePostback(event) {
     const actorInfo = await resolveApprovalActor(event);
     const actorName = actorInfo.displayName;
     if (action === 'approve') {
-      await updateSaleStatusWithTimestamp(saleId, 'confirmed', {
+      const updated = await updateSaleStatusWithTimestamp(saleId, 'confirmed', {
         confirmedByUsername: actorInfo.confirmedByUsername,
         lineNotified: false,
+        expectedStatuses: ['draft'],
         auditActorType: actorInfo.actorType || 'line',
         auditActorId: actorInfo.actorId || actor,
         auditActorName: actorName,
       });
+      if (!updated) {
+        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'รายการนี้ถูกดำเนินการไปแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }] });
+        return true;
+      }
       await logEvent('sales_approved_by_manager', {
         sale_id: saleId,
         actor,
@@ -784,13 +797,18 @@ async function handlePostback(event) {
     }
 
     if (action === 'reject') {
-      await updateSaleStatusWithTimestamp(saleId, 'rejected', {
+      const updated = await updateSaleStatusWithTimestamp(saleId, 'rejected', {
         confirmedByUsername: actorInfo.confirmedByUsername,
         lineNotified: false,
+        expectedStatuses: ['draft'],
         auditActorType: actorInfo.actorType || 'line',
         auditActorId: actorInfo.actorId || actor,
         auditActorName: actorName,
       });
+      if (!updated) {
+        await replyOrPush({ ...replyTarget, messages: [{ type: 'text', text: 'รายการนี้ถูกดำเนินการไปแล้ว ระบบจะส่งแจ้งผลอัตโนมัติ' }] });
+        return true;
+      }
       await logEvent('sales_rejected_by_manager', {
         sale_id: saleId,
         actor,

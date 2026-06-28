@@ -182,6 +182,34 @@ async function push(to, message) {
   return lineClient.pushMessage({ to, messages: [message] });
 }
 
+async function claimLineNotification(table, id) {
+  const { data, error } = await supabase
+    .from(table)
+    .update({ line_notified: true, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .or('line_notified.eq.false,line_notified.is.null')
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    console.warn('LINE notification claim failed:', error.message || error, { table, id });
+    return false;
+  }
+
+  return Boolean(data);
+}
+
+async function releaseLineNotification(table, id) {
+  const { error } = await supabase
+    .from(table)
+    .update({ line_notified: false, updated_at: new Date().toISOString() })
+    .eq('id', id);
+
+  if (error) {
+    console.warn('LINE notification release failed:', error.message || error, { table, id });
+  }
+}
+
 function getLineErrorDetail(error) {
   const responseData =
     error && error.response && error.response.data ||
@@ -457,7 +485,7 @@ function formatThaiDateTime(value) {
 async function notifySalesResults() {
   let { data, error } = await supabase
     .from('sales')
-    .select('id,sell_date,status,confirmed_at,confirmed_by,cash_amount,credit_amount,transfer_amount,total_amount,line_group_id,line_notified,branches(code,name)')
+    .select('id,sell_date,status,confirmed_at,confirmed_by,cash_amount,credit_amount,transfer_amount,total_amount,line_group_id,line_notified,audit_actor_name,branches(code,name)')
     .in('status', ['confirmed', 'rejected'])
     .not('line_group_id', 'is', null)
     .or('line_notified.eq.false,line_notified.is.null')
@@ -474,7 +502,7 @@ async function notifySalesResults() {
 
     const branchCode = sale.branches ? (sale.branches.code || sale.branches.name) : '-';
     const saleDate = formatThaiDate(sale.sell_date || sale.confirmed_at);
-    const approvedBy = getDisplayName(sale.confirmed_by);
+    const approvedBy = getDisplayName(sale.confirmed_by, { name: sale.audit_actor_name });
     const approvedAt = formatThaiDateTime(sale.confirmed_at);
     const attachmentCount = await countAttachments('sale', sale.id);
 
@@ -495,13 +523,13 @@ async function notifySalesResults() {
         attachmentCount,
       });
 
+    const claimed = await claimLineNotification('sales', sale.id);
+    if (!claimed) continue;
+
     try {
       await push(groupId, message);
-      await supabase
-        .from('sales')
-        .update({ line_notified: true, updated_at: new Date().toISOString() })
-        .eq('id', sale.id);
     } catch (sendError) {
+      await releaseLineNotification('sales', sale.id);
       console.warn('Sales result notification failed:', sendError.message || sendError, { sale_id: sale.id, status: sale.status, groupId });
     }
   }
@@ -518,6 +546,7 @@ async function notifyCashDepositResults() {
       status,
       verified_by,
       verified_at,
+      audit_actor_name,
       slip_url,
       line_group_id,
       line_notified,
@@ -541,7 +570,7 @@ async function notifyCashDepositResults() {
 
     const branchCode = deposit.branches ? (deposit.branches.code || deposit.branches.name) : '-';
     const depositDate = formatThaiDate(deposit.deposit_date);
-    const verifiedBy = getDisplayName(deposit.verified_by);
+    const verifiedBy = getDisplayName(deposit.verified_by, { name: deposit.audit_actor_name });
     const verifiedAt = formatThaiDateTime(deposit.verified_at);
     const attachmentCount = await countAttachments('cash_deposit', deposit.id);
     const slipCount = attachmentCount || (deposit.slip_url ? 1 : 0);
@@ -563,13 +592,13 @@ async function notifyCashDepositResults() {
         verifiedAt,
       });
 
+    const claimed = await claimLineNotification('cash_deposits', deposit.id);
+    if (!claimed) continue;
+
     try {
       await push(groupId, message);
-      await supabase
-        .from('cash_deposits')
-        .update({ line_notified: true, updated_at: new Date().toISOString() })
-        .eq('id', deposit.id);
     } catch (sendError) {
+      await releaseLineNotification('cash_deposits', deposit.id);
       console.warn('Cash deposit result notification failed:', sendError.message || sendError, { deposit_id: deposit.id, status: deposit.status, groupId });
     }
   }
@@ -727,6 +756,7 @@ async function notifyInspectionResults() {
       photo_count,
       manager_note,
       reviewed_by,
+      audit_actor_name,
       review_time,
       updated_at,
       line_group_id,
@@ -749,7 +779,7 @@ async function notifyInspectionResults() {
     if (!groupId) continue;
 
     const branchCode = inspection.branches ? (inspection.branches.code || inspection.branches.name) : '-';
-    const reviewedBy = getDisplayName(inspection.reviewed_by);
+    const reviewedBy = getDisplayName(inspection.reviewed_by, { name: inspection.audit_actor_name });
     const reviewTime = inspection.review_time || null;
 
     const message = inspectionResultFlex({
@@ -762,16 +792,13 @@ async function notifyInspectionResults() {
       managerNote: inspection.manager_note,
     });
 
+    const claimed = await claimLineNotification('store_inspections', inspection.id);
+    if (!claimed) continue;
+
     try {
       await push(groupId, message);
-      await supabase
-        .from('store_inspections')
-        .update({
-          line_notified: true,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', inspection.id);
     } catch (sendError) {
+      await releaseLineNotification('store_inspections', inspection.id);
       console.warn('Inspection result LINE push failed:', getLineErrorDetail(sendError), { inspection_id: inspection.id, groupId });
     }
   }
@@ -880,6 +907,100 @@ function rememberShiftReminder(key, date = new Date()) {
   }
 }
 
+async function claimShiftReminder(key, shift, type, date = new Date()) {
+  if (sentShiftReminderKeys.has(key)) return false;
+
+  const now = new Date().toISOString();
+  const payload = {
+    reminder_key: key,
+    reminder_type: type,
+    work_date: localDateString(date),
+    branch_id: shift.branchId,
+    branch_code: shift.branchCode || null,
+    line_group_id: shift.lineGroupId || null,
+    status: 'claimed',
+    claimed_at: now,
+  };
+
+  const { data: claim, error: claimError } = await supabase
+    .from('system_audit_logs')
+    .insert([{
+      user_name: 'line_bot',
+      action: 'shift_reminder_claim',
+      table_name: 'line_shift_reminders',
+      record_id: key,
+      source: 'line',
+      description: `${type} shift reminder claim`,
+      new_value: payload,
+      module: 'line_jobs',
+      branch_id: shift.branchId || null,
+      entity_name: shift.branchCode || null,
+      actor_type: 'system',
+      actor_id: 'line_jobs',
+      created_at: now,
+    }])
+    .select('id')
+    .single();
+
+  if (claimError || !claim) {
+    console.warn('Shift reminder claim failed:', claimError && (claimError.message || claimError), { key, branchId: shift.branchId, type });
+    return true;
+  }
+
+  const { data: firstClaim, error: firstClaimError } = await supabase
+    .from('system_audit_logs')
+    .select('id')
+    .eq('action', 'shift_reminder_claim')
+    .eq('table_name', 'line_shift_reminders')
+    .eq('record_id', key)
+    .order('id', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (firstClaimError) {
+    console.warn('Shift reminder claim check failed:', firstClaimError.message || firstClaimError, { key, branchId: shift.branchId, type });
+    return true;
+  }
+
+  const claimed = firstClaim && String(firstClaim.id) === String(claim.id);
+  if (!claimed) rememberShiftReminder(key, date);
+  return claimed;
+}
+
+async function markShiftReminderSent(key, shift, type, date = new Date()) {
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('system_audit_logs')
+    .insert([{
+      user_name: 'line_bot',
+      action: 'shift_reminder_sent',
+      table_name: 'line_shift_reminders',
+      record_id: key,
+      source: 'line',
+      description: `${type} shift reminder sent`,
+      new_value: {
+        reminder_key: key,
+        reminder_type: type,
+        work_date: localDateString(date),
+        branch_id: shift.branchId,
+        branch_code: shift.branchCode || null,
+        line_group_id: shift.lineGroupId || null,
+        status: 'sent',
+        sent_at: now,
+      },
+      module: 'line_jobs',
+      branch_id: shift.branchId || null,
+      entity_name: shift.branchCode || null,
+      actor_type: 'system',
+      actor_id: 'line_jobs',
+      created_at: now,
+    }]);
+
+  if (error) {
+    console.warn('Shift reminder sent audit failed:', error.message || error, { key, branchId: shift.branchId, type });
+  }
+}
+
 async function sendShiftReminders(date = new Date()) {
   const today = localDateString(date);
   const nowMinutes = bangkokMinuteOfDay(date);
@@ -898,6 +1019,9 @@ async function sendShiftReminders(date = new Date()) {
       isReminderWindow(nowMinutes, openReminderAt) &&
       !sentShiftReminderKeys.has(openKey)
     ) {
+      const claimed = await claimShiftReminder(openKey, shift, 'open', date);
+      if (claimed) {
+      rememberShiftReminder(openKey, date);
       try {
         await push(shift.lineGroupId, shiftReminderFlex({
           type: 'open',
@@ -907,9 +1031,10 @@ async function sendShiftReminders(date = new Date()) {
           commandText: '#เปิดร้าน',
           minutesBefore: OPEN_REMINDER_MINUTES_BEFORE,
         }));
-        rememberShiftReminder(openKey, date);
+        await markShiftReminderSent(openKey, shift, 'open', date);
       } catch (sendError) {
         console.warn('Open shop reminder LINE push failed:', getLineErrorDetail(sendError), { branchId: shift.branchId, groupId: shift.lineGroupId });
+      }
       }
     }
 
@@ -921,6 +1046,9 @@ async function sendShiftReminders(date = new Date()) {
       isReminderWindow(nowMinutes, closeReminderAt) &&
       !sentShiftReminderKeys.has(closeKey)
     ) {
+      const claimed = await claimShiftReminder(closeKey, shift, 'close', date);
+      if (!claimed) continue;
+      rememberShiftReminder(closeKey, date);
       try {
         await push(shift.lineGroupId, shiftReminderFlex({
           type: 'close',
@@ -930,7 +1058,7 @@ async function sendShiftReminders(date = new Date()) {
           commandText: '#ปิดร้าน',
           minutesBefore: CLOSE_REMINDER_MINUTES_BEFORE,
         }));
-        rememberShiftReminder(closeKey, date);
+        await markShiftReminderSent(closeKey, shift, 'close', date);
       } catch (sendError) {
         console.warn('Close shop reminder LINE push failed:', getLineErrorDetail(sendError), { branchId: shift.branchId, groupId: shift.lineGroupId });
       }

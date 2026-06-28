@@ -1,6 +1,7 @@
 const openStates = new Map();
 const recentImages = new Map();
 const reminderTimers = new Map();
+const processedCompletionKeys = new Map();
 
 const OPEN_STATUS = {
   AWAITING_IMAGE: 'awaiting_image',
@@ -72,7 +73,14 @@ function clearReminderTimer(key) {
   reminderTimers.delete(key);
 }
 
-setInterval(() => {
+function markOpenCompletionProcessed(key) {
+  if (!key) return false;
+  if (processedCompletionKeys.has(key)) return false;
+  processedCompletionKeys.set(key, Date.now());
+  return true;
+}
+
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
 
   for (const [key, state] of openStates.entries()) {
@@ -86,7 +94,14 @@ setInterval(() => {
       recentImages.delete(key);
     }
   }
+
+  for (const [key, timestamp] of processedCompletionKeys.entries()) {
+    if (now - timestamp > STATE_MAX_AGE_MS) {
+      processedCompletionKeys.delete(key);
+    }
+  }
 }, 60000);
+if (cleanupTimer.unref) cleanupTimer.unref();
 
 module.exports = {
   OPEN_STATUS,
@@ -99,6 +114,7 @@ module.exports = {
   hasOpenState,
   setRecentOpenImage,
   consumeRecentOpenImage,
+  markOpenCompletionProcessed,
   setReminderTimer,
   clearReminderTimer,
 };

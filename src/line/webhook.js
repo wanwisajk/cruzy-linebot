@@ -42,8 +42,6 @@ router.post('/', async (req, res, next) => {
 
     const events = requestBody.events || [];
     console.log(`📨 Received ${events.length} event(s)`);
-    runLineJobs().catch((err) => console.warn('LINE jobs skipped:', err.message || err));
-    
     const results = await Promise.allSettled(events.map((ev) => 
       handleEvent(ev).catch((err) => {
         console.error('❌ Error handling event:', err.message || err);
@@ -53,6 +51,7 @@ router.post('/', async (req, res, next) => {
     
     const succeeded = results.filter(r => r.status === 'fulfilled').length;
     const failed = results.filter(r => r.status === 'rejected').length;
+    runLineJobs().catch((err) => console.warn('LINE jobs skipped:', err.message || err));
     console.log(`✅ Processed: ${succeeded} OK, ${failed} failed`);
     
     res.json({ ok: true, processed: succeeded });

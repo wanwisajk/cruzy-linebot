@@ -9,7 +9,7 @@ const { buildLineAudit } = require('../../utils/lineAudit');
 const {
   getBranchScheduleWindow,
   ensureAttendanceAlert,
-  minutesOf,
+  calculateLateMinutes,
   parseDateFromText,
   parseTimeFromText,
 } = require('../../utils/attendance');
@@ -24,6 +24,7 @@ const {
   hasOpenState,
   setRecentOpenImage,
   consumeRecentOpenImage,
+  markOpenCompletionProcessed,
   setReminderTimer,
   clearReminderTimer,
 } = require('./state');
@@ -39,7 +40,7 @@ function scheduleMissingImageReminder(stateKey, target) {
 
   const timer = setTimeout(async () => {
     const state = getOpenState(stateKey);
-    if (!state || state.status !== OPEN_STATUS.AWAITING_IMAGE || state.reminderSent) return;
+    if (!state || state.status !== OPEN_STATUS.AWAITING_IMAGE || state.reminderSent || state.imageMessageId) return;
 
     updateOpenState(stateKey, { reminderSent: true });
 
@@ -85,7 +86,7 @@ async function handle(event) {
     branchId: branch ? branch.id : null,
     workDate,
   });
-  const lateBy = Math.max(0, minutesOf(clockIn) - minutesOf(schedule.shiftStart));
+  const lateBy = calculateLateMinutes(clockIn, schedule.shiftStart);
   const pendingImage = consumeRecentOpenImage(stateKey);
   const openState = {
     status: OPEN_STATUS.AWAITING_IMAGE,
@@ -126,6 +127,17 @@ async function handle(event) {
 }
 
 async function completeOpen({ event, stateKey, state, imageMessageId, imageReceivedAt }) {
+  const completionKey = [
+    'open',
+    state.lineGroupId || state.lineUserId || stateKey || 'unknown',
+    state.messageId || state.messageText || state.submittedAt || 'no_text_message',
+    imageMessageId || 'no_image',
+  ].join(':');
+  if (!markOpenCompletionProcessed(completionKey)) {
+    clearOpenState(stateKey);
+    return null;
+  }
+
   clearReminderTimer(stateKey);
 
   const record = await recordOpen({
@@ -198,12 +210,18 @@ async function handleImageMessage(event) {
     return false;
   }
 
+  const imageReceivedAt = event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString();
+  updateOpenState(stateKey, {
+    imageMessageId: messageId,
+    imageReceivedAt,
+  });
+
   await completeOpen({
     event,
     stateKey,
     state,
     imageMessageId: messageId,
-    imageReceivedAt: event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString(),
+    imageReceivedAt,
   });
   return true;
 }

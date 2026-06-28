@@ -3,6 +3,19 @@ const { blobClient } = require('../../../../backend/config/line');
 const { uploadAttachmentBuffer } = require('../../../../backend/services/attachment.service');
 const { syncDepositLedger } = require('../../../../backend/services/branchCashLedger.service');
 
+function isMissingColumnError(error) {
+  const message = `${error && error.message || ''} ${error && error.details || ''}`;
+  return error && (error.code === 'PGRST204' || /column|schema cache/i.test(message));
+}
+
+function isVerifiedByForeignKeyError(error) {
+  const message = `${error && error.message || ''} ${error && error.details || ''}`;
+  return error && (
+    error.code === '23503' ||
+    /cash_deposits_verified_by_fkey|foreign key constraint/i.test(message)
+  );
+}
+
 async function resolveBankAccountId(bank, bankShort) {
   const candidates = [bankShort, bank].filter(Boolean);
   if (candidates.length === 0) return null;
@@ -258,8 +271,70 @@ async function recordDeposit({
   return data;
 }
 
+async function updateDepositStatusWithTimestamp(depositId, status, options = {}) {
+  const payload = {
+    status,
+    verified_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  if (options.verifiedByUsername) {
+    payload.verified_by = options.verifiedByUsername;
+  }
+
+  if (typeof options.lineNotified === 'boolean') {
+    payload.line_notified = options.lineNotified;
+  }
+
+  if (options.auditActorType) payload.audit_actor_type = options.auditActorType;
+  if (options.auditActorId) payload.audit_actor_id = String(options.auditActorId);
+  if (options.auditActorName) payload.audit_actor_name = options.auditActorName;
+
+  let query = supabase
+    .from('cash_deposits')
+    .update(payload)
+    .eq('id', depositId);
+
+  if (Array.isArray(options.expectedStatuses) && options.expectedStatuses.length > 0) {
+    query = query.in('status', options.expectedStatuses);
+  }
+
+  let { data, error } = await query.select('*').maybeSingle();
+
+  if (error && (isMissingColumnError(error) || isVerifiedByForeignKeyError(error))) {
+    const missingColumn = isMissingColumnError(error);
+    const fallbackPayload = {
+      status: payload.status,
+      verified_at: payload.verified_at,
+      updated_at: payload.updated_at,
+    };
+
+    if (!missingColumn && typeof options.lineNotified === 'boolean') {
+      fallbackPayload.line_notified = options.lineNotified;
+    }
+    if (!missingColumn && options.auditActorType) fallbackPayload.audit_actor_type = options.auditActorType;
+    if (!missingColumn && options.auditActorId) fallbackPayload.audit_actor_id = String(options.auditActorId);
+    if (!missingColumn && options.auditActorName) fallbackPayload.audit_actor_name = options.auditActorName;
+
+    let retryQuery = supabase
+      .from('cash_deposits')
+      .update(fallbackPayload)
+      .eq('id', depositId);
+    if (Array.isArray(options.expectedStatuses) && options.expectedStatuses.length > 0) {
+      retryQuery = retryQuery.in('status', options.expectedStatuses);
+    }
+    const retry = await retryQuery.select('*').maybeSingle();
+    data = retry.data;
+    error = retry.error;
+  }
+
+  if (error) throw error;
+  return data;
+}
+
 module.exports = {
   recordDeposit,
+  updateDepositStatusWithTimestamp,
   uploadSlipImage,
   uploadSlipImageFromBuffer,
   saveDepositSlipAttachments,
@@ -270,5 +345,6 @@ module.exports = {
   fetchSalesCashSnapshot,
   _test: {
     normalizeMoneyAmount,
+    isVerifiedByForeignKeyError,
   },
 };

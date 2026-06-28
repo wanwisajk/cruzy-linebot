@@ -52,16 +52,38 @@ async function recordOpen({
         message_text: messageText || rawText || null,
         submitted_at: submittedAt || timestamp || new Date().toISOString(),
       };
-      const { error } = await supabase.from('attendance').insert([attendancePayload]);
+
+      const { data: existingAttendance, error: selectAttendanceError } = await supabase
+        .from('attendance')
+        .select('id')
+        .eq('employee_id', employeeId)
+        .eq('branch_id', branchId)
+        .eq('work_date', workDate)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (selectAttendanceError) throw selectAttendanceError;
+
+      const writeAttendance = existingAttendance
+        ? supabase.from('attendance').update(attendancePayload).eq('id', existingAttendance.id)
+        : supabase.from('attendance').insert([attendancePayload]);
+
+      const { error } = await writeAttendance;
       if (error) {
         if (!isMissingColumnError(error)) throw error;
-        await supabase.from('attendance').insert([{
+        const fallbackPayload = {
           employee_id: employeeId,
           branch_id: branchId,
           work_date: workDate,
           clock_in: clockIn,
           late_minutes: lateBy || 0,
-        }]);
+        };
+        if (existingAttendance) {
+          await supabase.from('attendance').update(fallbackPayload).eq('id', existingAttendance.id);
+        } else {
+          await supabase.from('attendance').insert([fallbackPayload]);
+        }
       }
     } catch (err) {
       console.warn('Unable to record opening attendance:', err.message || err);

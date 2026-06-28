@@ -11,7 +11,7 @@ const {
   parseDateFromText,
   parseTimeFromText,
   getBranchScheduleWindow,
-  minutesOf,
+  calculateClosedEarlyMinutes,
   ensureAttendanceAlert,
   createAbsenceAlertsForBranchDay,
 } = require('../../utils/attendance');
@@ -26,6 +26,7 @@ const {
   hasCloseState,
   setRecentCloseImage,
   consumeRecentCloseImage,
+  markCloseCompletionProcessed,
   setReminderTimer,
   clearReminderTimer,
 } = require('./state');
@@ -46,7 +47,7 @@ function scheduleMissingImageReminder(stateKey, target) {
 
   const timer = setTimeout(async () => {
     const state = getCloseState(stateKey);
-    if (!state || state.status !== CLOSE_STATUS.AWAITING_IMAGE || state.reminderSent) return;
+    if (!state || state.status !== CLOSE_STATUS.AWAITING_IMAGE || state.reminderSent || state.imageMessageId) return;
 
     updateCloseState(stateKey, { reminderSent: true });
 
@@ -91,7 +92,7 @@ async function handle(event) {
     branchId: branch.id,
     workDate,
   });
-  const closedEarlyBy = Math.max(0, minutesOf(schedule.shiftEnd) - minutesOf(clockOut));
+  const closedEarlyBy = calculateClosedEarlyMinutes(clockOut, schedule.shiftEnd);
   const closeState = {
     status: CLOSE_STATUS.AWAITING_IMAGE,
     employeeId: employee ? employee.id : null,
@@ -106,6 +107,7 @@ async function handle(event) {
     lineGroupId,
     lineUserId,
     messageText: text,
+    messageId: event.message && event.message.id || null,
     workDate,
     clockOut,
     expectedTime: schedule.shiftEnd,
@@ -131,6 +133,17 @@ async function handle(event) {
 }
 
 async function completeClose({ event, stateKey, state, imageMessageId, imageReceivedAt }) {
+  const completionKey = [
+    'close',
+    state.lineGroupId || state.lineUserId || stateKey || 'unknown',
+    state.messageId || state.messageText || state.submittedAt || 'no_text_message',
+    imageMessageId || 'no_image',
+  ].join(':');
+  if (!markCloseCompletionProcessed(completionKey)) {
+    clearCloseState(stateKey);
+    return null;
+  }
+
   clearReminderTimer(stateKey);
 
   if (state.employeeId && state.branchId) {
@@ -479,12 +492,18 @@ async function handleImageMessage(event) {
     return false;
   }
 
+  const imageReceivedAt = event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString();
+  updateCloseState(stateKey, {
+    imageMessageId: messageId,
+    imageReceivedAt,
+  });
+
   await completeClose({
     event,
     stateKey,
     state,
     imageMessageId: messageId,
-    imageReceivedAt: event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString(),
+    imageReceivedAt,
   });
   return true;
 }

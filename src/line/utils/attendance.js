@@ -46,6 +46,20 @@ function minutesOf(timeValue) {
   return hour * 60 + minute;
 }
 
+function calculateLateMinutes(clockIn, shiftStart) {
+  const clockInMinutes = minutesOf(clockIn);
+  const shiftStartMinutes = minutesOf(shiftStart);
+  if (!Number.isFinite(clockInMinutes) || !Number.isFinite(shiftStartMinutes)) return 0;
+  return Math.max(0, clockInMinutes - shiftStartMinutes);
+}
+
+function calculateClosedEarlyMinutes(clockOut, shiftEnd) {
+  const clockOutMinutes = minutesOf(clockOut);
+  const shiftEndMinutes = minutesOf(shiftEnd);
+  if (!Number.isFinite(clockOutMinutes) || !Number.isFinite(shiftEndMinutes)) return 0;
+  return Math.max(0, shiftEndMinutes - clockOutMinutes);
+}
+
 function dayOfWeek(dateText) {
   const date = new Date(`${dateText}T00:00:00`);
   return date.getDay();
@@ -97,6 +111,7 @@ async function getBranchScheduleWindow({ employeeId, branchId, workDate }) {
 
 async function ensureAttendanceAlert({ alertType, employeeId, branchId, workDate, title, detail, severity = 'warning', alertTime }) {
   if (!employeeId || !branchId || !workDate) return null;
+  const alertKey = `${alertType}:${workDate}:${branchId}:${employeeId}`;
 
   const { data: existing } = await supabase
     .from('attendance_alerts')
@@ -109,6 +124,27 @@ async function ensureAttendanceAlert({ alertType, employeeId, branchId, workDate
     .maybeSingle();
 
   if (existing) return existing;
+
+  const claimed = await claimAttendanceAlert(alertKey, {
+    alertType,
+    employeeId,
+    branchId,
+    workDate,
+    title,
+    severity,
+  });
+  if (!claimed) {
+    const { data: claimedExisting } = await supabase
+      .from('attendance_alerts')
+      .select('id')
+      .eq('alert_type', alertType)
+      .eq('employee_id', employeeId)
+      .eq('branch_id', branchId)
+      .eq('work_date', workDate)
+      .limit(1)
+      .maybeSingle();
+    return claimedExisting || null;
+  }
 
   const { data, error } = await supabase
     .from('attendance_alerts')
@@ -131,6 +167,54 @@ async function ensureAttendanceAlert({ alertType, employeeId, branchId, workDate
   }
 
   return data;
+}
+
+async function claimAttendanceAlert(alertKey, payload) {
+  const now = new Date().toISOString();
+  const { data: claim, error: claimError } = await supabase
+    .from('system_audit_logs')
+    .insert([{
+      user_name: 'line_bot',
+      action: 'attendance_alert_claim',
+      table_name: 'attendance_alerts',
+      record_id: alertKey,
+      source: 'line',
+      description: `${payload.alertType} attendance alert claim`,
+      new_value: {
+        alert_key: alertKey,
+        ...payload,
+        claimed_at: now,
+      },
+      module: 'line',
+      branch_id: payload.branchId || null,
+      actor_type: 'system',
+      actor_id: 'line_bot',
+      created_at: now,
+    }])
+    .select('id')
+    .single();
+
+  if (claimError || !claim) {
+    console.warn('Attendance alert claim failed:', claimError && (claimError.message || claimError), { alertKey });
+    return true;
+  }
+
+  const { data: firstClaim, error: firstClaimError } = await supabase
+    .from('system_audit_logs')
+    .select('id')
+    .eq('action', 'attendance_alert_claim')
+    .eq('table_name', 'attendance_alerts')
+    .eq('record_id', alertKey)
+    .order('id', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (firstClaimError) {
+    console.warn('Attendance alert claim check failed:', firstClaimError.message || firstClaimError, { alertKey });
+    return true;
+  }
+
+  return firstClaim && String(firstClaim.id) === String(claim.id);
 }
 
 async function createAbsenceAlertsForBranchDay({ branchId, workDate }) {
@@ -183,6 +267,8 @@ module.exports = {
   parseDateFromText,
   parseTimeFromText,
   minutesOf,
+  calculateLateMinutes,
+  calculateClosedEarlyMinutes,
   getBranchScheduleWindow,
   ensureAttendanceAlert,
   createAbsenceAlertsForBranchDay,
