@@ -11,7 +11,7 @@ const {
   ensureAttendanceAlert,
   calculateLateMinutes,
   parseDateFromText,
-  parseTimeFromText,
+  localTimeString,
 } = require('../../utils/attendance');
 const {
   OPEN_STATUS,
@@ -80,7 +80,7 @@ async function handle(event) {
     return null;
   }
 
-  const clockIn = parseTimeFromText(parsed.text, eventTime);
+  const clockIn = localTimeString(eventTime);
   const schedule = await getBranchScheduleWindow({
     employeeId: employee ? employee.id : null,
     branchId: branch ? branch.id : null,

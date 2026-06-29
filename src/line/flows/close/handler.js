@@ -9,7 +9,7 @@ const { getDisplayName } = require('../../utils/displayName');
 const { buildLineAudit } = require('../../utils/lineAudit');
 const {
   parseDateFromText,
-  parseTimeFromText,
+  localTimeString,
   getBranchScheduleWindow,
   calculateClosedEarlyMinutes,
   ensureAttendanceAlert,
@@ -86,7 +86,7 @@ async function handle(event) {
     return;
   }
 
-  const clockOut = parseTimeFromText(text, eventTime);
+  const clockOut = localTimeString(eventTime);
   const schedule = await getBranchScheduleWindow({
     employeeId: employee ? employee.id : null,
     branchId: branch.id,

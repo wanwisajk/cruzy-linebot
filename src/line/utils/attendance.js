@@ -1,16 +1,35 @@
 const { supabase } = require('../../../backend/config/supabase');
 const { getDisplayName } = require('./displayName');
 
+const BANGKOK_TIME_ZONE = 'Asia/Bangkok';
+
 function pad(value) {
   return String(value).padStart(2, '0');
 }
 
+function bangkokParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BANGKOK_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+
+  return Object.fromEntries(parts.map((part) => [part.type, part.value]));
+}
+
 function localDateString(date = new Date()) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const parts = bangkokParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function localTimeString(date = new Date()) {
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  const parts = bangkokParts(date);
+  return `${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
 function parseDateFromText(text, fallbackDate = new Date()) {
@@ -22,7 +41,8 @@ function parseDateFromText(text, fallbackDate = new Date()) {
 
   const slash = raw.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/);
   if (slash) {
-    let year = slash[3] ? Number(slash[3]) : fallbackDate.getFullYear();
+    const fallbackParts = bangkokParts(fallbackDate);
+    let year = slash[3] ? Number(slash[3]) : Number(fallbackParts.year);
     if (year < 100) year += 2000;
     if (year > 2400) year -= 543;
     return `${year}-${pad(slash[2])}-${pad(slash[1])}`;
