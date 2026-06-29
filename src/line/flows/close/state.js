@@ -11,9 +11,9 @@ const IMAGE_WINDOW_MS = 10000;
 const STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
 function getCloseStateKey(source = {}) {
-  const chatKey = source.groupId || source.roomId || source.userId || 'unknown';
-  const senderKey = source.userId || 'unknown';
-  return `${chatKey}:${senderKey}`;
+  if (source.groupId) return `group:${source.groupId}`;
+  if (source.roomId) return `room:${source.roomId}`;
+  return `user:${source.userId || 'unknown'}`;
 }
 
 function getCloseState(key) {
